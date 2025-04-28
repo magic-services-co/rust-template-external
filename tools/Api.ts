@@ -7,6 +7,7 @@ export class Api {
     static ignoreRoleChange: boolean;
 
     static sendRoleUpdate(transaction: Transaction): void {
+
         const headers: Headers = new Headers()
         headers.set('Content-Type', 'application/json');
         headers.set('Accept', 'application/json');
@@ -22,9 +23,14 @@ export class Api {
         fetch(request)
             .then(res => {
                 if (!res.ok) {
-                    console.error("Sending Role update error, response:", res);
-                    res.json().then(json => console.error("body: ", json));
+                    console.error(`[${new Date().toISOString()}] Error sending role update to website:`, res);
+                    res.json().then(json => console.error(`[${new Date().toISOString()}] Response body:`, json));
+                } else {
+                    console.log(`[${new Date().toISOString()}] Successfully sent role update to website`);
                 }
+            })
+            .catch(error => {
+                console.error(`[${new Date().toISOString()}] Error in sendRoleUpdate: ${error}`);
             });
     }
 
@@ -135,47 +141,124 @@ export class Api {
         for (const log of logs) {
             if (log.action == "ROLE_ASSIGNED" || log.action == "ROLE_REVOKED" || log.action == "USER_UPDATED") {
                 if (log.discordRoleId) {
-                    const guild = client.guilds.cache.get(log.discordGuildId);
-                    if (!guild) {
-                        console.error("Guild " + log.discordGuildId + " not found!");
-                        return;
-                    }
-                    if (guild.roles.premiumSubscriberRole?.id == log.discordRoleId) {
-                        return;
-                    }
-                    const member = await guild.members.fetch(log.discordId).catch((reason) => console.warn(`Member "${log.discordId}" not found on guild "${guild.name}": ${reason}`));
-                    if (!member) {
-                        console.error(`Member "${log.discordId}" not found on guild "${guild.name}"!`);
-                        return;
-                    }
-                    if (log.action == "ROLE_ASSIGNED") {
-                        try {
-                            Api.ignoreRoleChange = true;
-                            setTimeout(() => Api.ignoreRoleChange = false, 2000);
-                            await member.roles.add(log.discordRoleId);
-                            console.log(`Role: "${log.discordRoleId}" added to: ${member.displayName} due to API`);
-                        } catch (error) {
-                            console.error("Error adding role to member: ", log.discordId, log.discordRoleId, error);
-                        }
-                    } else if (log.action == "ROLE_REVOKED") {
-                        try {
-                            Api.ignoreRoleChange = true;
-                            setTimeout(() => Api.ignoreRoleChange = false, 2000);
-                            await member.roles.remove(log.discordRoleId);
-                            console.log(`Role: "${log.discordRoleId}" revoked from: ${member.displayName} due to API`);
-                        } catch (error) {
-                            console.error("Error revoking role from member: ", log.discordId, log.discordRoleId, error);
-                        }
-                    } else if (log.action == "USER_UPDATED" && config.SET_DISCORD_NAME_TO_STEAM_NAME) {
-                        console.log(`Changing name of "${member.nickname}" to "${log.name}"`);
-                        await member.setNickname(log.name);
-                    }
-
+                    await this.applyRoleUpdate(client, log);
                 }
             }
         }
         if (logs.length > 0) {
             console.log(`Fetched and applied ${logs.length} update(s) successfully`);
+        }
+    }
+
+    static async applyRoleUpdate(client: Client, log: Log) {
+        const guild = client.guilds.cache.get(log.discordGuildId);
+        if (!guild) {
+            console.error("Guild " + log.discordGuildId + " not found!");
+            return;
+        }
+        if (guild.roles.premiumSubscriberRole?.id == log.discordRoleId) {
+            return;
+        }
+        
+        try {
+            if (!guild.members.cache.has(log.discordId)) {
+                console.warn(`Member "${log.discordId}" not found in guild "${guild.name}" cache, attempting to fetch...`);
+                try {
+                    await guild.members.fetch(log.discordId);
+                } catch (error) {
+                    console.warn(`Member "${log.discordId}" not found on guild "${guild.name}": ${error}`);
+                    return;
+                }
+            }
+
+            const member = guild.members.cache.get(log.discordId);
+            if (!member) {
+                console.error(`Member "${log.discordId}" not found in guild "${guild.name}" after fetch!`);
+                return;
+            }
+
+            if (log.action == "ROLE_ASSIGNED") {
+                try {
+                    Api.ignoreRoleChange = true;
+                    setTimeout(() => Api.ignoreRoleChange = false, 2000);
+                    await member.roles.add(log.discordRoleId);
+                    console.log(`Role: "${log.discordRoleId}" added to: ${member.displayName} due to API`);
+                } catch (error) {
+                    console.error(`Error adding role to member ${member.displayName} (${log.discordId}), role: ${log.discordRoleId}, error: ${error}`);
+                }
+            } else if (log.action == "ROLE_REVOKED") {
+                try {
+                    Api.ignoreRoleChange = true;
+                    setTimeout(() => Api.ignoreRoleChange = false, 2000);
+                    await member.roles.remove(log.discordRoleId);
+                    console.log(`Role: "${log.discordRoleId}" revoked from: ${member.displayName} due to API`);
+                } catch (error) {
+                    console.error(`Error revoking role from member ${member.displayName} (${log.discordId}), role: ${log.discordRoleId}, error: ${error}`);
+                }
+            } else if (log.action == "USER_UPDATED" && config.SET_DISCORD_NAME_TO_STEAM_NAME) {
+                try {
+                    console.log(`Changing name of "${member.nickname}" to "${log.name}"`);
+                    await member.setNickname(log.name);
+                } catch (error) {
+                    console.error(`Error updating nickname for member ${member.displayName} (${log.discordId}), error: ${error}`);
+                }
+            }
+        } catch (error) {
+            console.error(`Error processing update for member ${log.discordId}: ${error}`);
+        }
+    }
+
+    static async handleInstantRoleUpdate(client: Client, userId: string, roleId: string, guildId: string, action: "add" | "remove") {
+        const guild = client.guilds.cache.get(guildId);
+        if (!guild) {
+            console.error(`[${new Date().toISOString()}] Guild ${guildId} not found!`);
+            return;
+        }
+
+        try {
+            if (!guild.members.cache.has(userId)) {
+                try {
+                    await guild.members.fetch(userId);
+                } catch (error) {
+                    return;
+                }
+            }
+
+            const member = guild.members.cache.get(userId);
+            if (!member) {
+                return;
+            }
+
+            const role = guild.roles.cache.get(roleId);
+            if (!role) {
+                return;
+            }
+
+            if (action === "add") {
+                if (member.roles.cache.has(roleId)) {
+                    return;
+                }
+                try {
+                    Api.ignoreRoleChange = true;
+                    setTimeout(() => Api.ignoreRoleChange = false, 2000);
+                    await member.roles.add(role);
+                } catch (error) {
+                    console.error(`[${new Date().toISOString()}] Error adding role to member ${member.displayName}: ${error}`);
+                }
+            } else {
+                if (!member.roles.cache.has(roleId)) {
+                    return;
+                }
+                try {
+                    Api.ignoreRoleChange = true;
+                    setTimeout(() => Api.ignoreRoleChange = false, 2000);
+                    await member.roles.remove(role);
+                } catch (error) {
+                    console.error(`[${new Date().toISOString()}] Error removing role from member ${member.displayName}: ${error}`);
+                }
+            }
+        } catch (error) {
+            console.error(`[${new Date().toISOString()}] Error in handleInstantRoleUpdate: ${error}`);
         }
     }
 
@@ -195,18 +278,26 @@ export class Api {
         const votes: MapVotes[] = await res.json();
         const jsonChannels: { guild: string, channel: string }[] = config.MAP_VOTES_CHANNELS;
         const channels: GuildBasedChannel[] = [];
+        
         for (const jsonChannel of jsonChannels) {
-            const guild = client.guilds.cache.get(jsonChannel.guild);
-            if (!guild) {
-                console.error(`Guild ${jsonChannel.guild} not found!`);
-                return;
+            try {
+                const guild = client.guilds.cache.get(jsonChannel.guild);
+                if (!guild) {
+                    console.error(`Guild ${jsonChannel.guild} not found!`);
+                    continue;
+                }
+                const channel = await guild.channels.fetch(jsonChannel.channel).catch(error => {
+                    console.error(`Error fetching channel ${jsonChannel.channel} on guild ${jsonChannel.guild}: ${error}`);
+                    return null;
+                });
+                if (!channel) {
+                    console.error(`Channel ${jsonChannel.channel} not found on guild ${jsonChannel.guild}!`);
+                    continue;
+                }
+                channels.push(channel);
+            } catch (error) {
+                console.error(`Error processing channel ${jsonChannel.channel} on guild ${jsonChannel.guild}: ${error}`);
             }
-            const channel = await guild.channels.fetch(jsonChannel.channel);
-            if (!channel) {
-                console.error(`Channel ${jsonChannel.channel} not found on guild ${jsonChannel.guild}!`);
-                return;
-            }
-            channels.push(channel);
         }
         for (const vote of votes) {
             const hexString = "0x" + vote.color.replace("0x", "").replace("#", "").toUpperCase();

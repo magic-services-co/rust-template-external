@@ -39,7 +39,6 @@ class SyncUsersRoles {
                 guild.members.fetch(memberId).then(async (member) => {
                     const membersRoles = await Api.fetchUsersRoles(member.id, interaction.guildId!);
 
-                    // If the premium role exists and is in the roles to track, we need to check if the user has it
                     if (premiumRole) {
                         if (membersRoles.includes(premiumRole.id)) {
                             if (!member.roles.cache.has(premiumRole.id)) {

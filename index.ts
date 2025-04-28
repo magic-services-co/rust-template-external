@@ -28,6 +28,39 @@ async function start() {
     client.once("ready", async () => {
         console.log(">> Bot started");
         await Api.fetchAndUpdateGuilds(client);
+        
+        setInterval(async () => {
+            try {
+                const linkedMembers = await Api.fetchLinkedUsers();
+                for (const guildId of config.GUILD_IDS) {
+                    const guild = client.guilds.cache.get(guildId);
+                    if (!guild) continue;
+
+                    const rolesToTrack = await Api.fetchRoles(guildId);
+                    for (const memberId of linkedMembers) {
+                        const member = await guild.members.fetch(memberId).catch(() => null);
+                        if (!member) continue;
+
+                        const membersRoles = await Api.fetchUsersRoles(member.id, guildId);
+
+                        for (const roleId of membersRoles) {
+                            if (!member.roles.cache.has(roleId) && rolesToTrack.includes(roleId)) {
+                                await Api.handleInstantRoleUpdate(client, member.id, roleId, guildId, "add");
+                            }
+                        }
+
+                        for (const roleId of rolesToTrack) {
+                            if (member.roles.cache.has(roleId) && !membersRoles.includes(roleId)) {
+                                await Api.handleInstantRoleUpdate(client, member.id, roleId, guildId, "remove");
+                            }
+                        }
+                    }
+                }
+            } catch (error) {
+                console.error(`[${new Date().toISOString()}] Error in periodic role sync:`, error);
+            }
+        }, 5000); 
+
         setInterval(async () => {
             const lastFetch = storage.get<string, string>("lastFetch", new Date().toISOString());
             await Api.fetchAndApplyUpdates(client, lastFetch);
