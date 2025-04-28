@@ -1,0 +1,20 @@
+{
+  "CLIENT_ID": "Bot Client ID",
+  "BOT_TOKEN": "",
+  "GUILD_IDS": [ "Discord Server ID" ],
+  "VIEW_MEMBERS_ROLES": ["RoleID"],
+  "SYNC_USERS_PERMS": ["ManageRoles"],
+  "MAP_VOTES_CHANNELS": [
+    {
+      "guild": "Discord Server ID",
+      "channel": "Discord Channel ID"
+    }
+  ],
+  "API_KEY": "API Bearer Token Generated in your .env file",
+  "UPDATE_CHECK_FREQUENCY (MINUTES)": 5,
+  "SET_DISCORD_NAME_TO_STEAM_NAME": false,
+  "EMBED_HEX": "0099FF",
+  "ACTIVITY_TYPE": "Custom",
+  "STATUS_TEXT": "{USERS_AMOUNT} users linked!",
+  "API_ENDPOINT": "https://magicservices.co/api"
+}
