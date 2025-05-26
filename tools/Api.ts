@@ -11,7 +11,7 @@ export class Api {
         const headers: Headers = new Headers()
         headers.set('Content-Type', 'application/json');
         headers.set('Accept', 'application/json');
-        headers.set('Authorization', `Bearer ${config.API_KEY}`);
+        headers.set('x-api-key', config.API_KEY);
 
         const request: RequestInfo = new Request(config.API_ENDPOINT +
             CONSTANTS.UPDATE_USER_ROLES, {
@@ -36,7 +36,7 @@ export class Api {
 
     static sendGuildUpdate(id: string, name: string, added: boolean) {
         const headers: Headers = new Headers();
-        headers.set('Authorization', `Bearer ${config.API_KEY}`);
+        headers.set('x-api-key', config.API_KEY);
         let request: RequestInfo;
         if (added) {
             headers.set('Content-Type', 'application/json');
@@ -70,18 +70,39 @@ export class Api {
     }
 
     static async fetchRoles(guildId: string): Promise<string[]> {
-        const request: RequestInfo = new Request(config.API_ENDPOINT + CONSTANTS.FETCH_ROLES + guildId, {
+        const url = new URL(config.API_ENDPOINT + CONSTANTS.FETCH_ROLES);
+        url.searchParams.set('guildId', guildId);
+        const request: RequestInfo = new Request(url, {
             method: 'GET',
-            headers: new Headers({ 'Authorization': `Bearer ${config.API_KEY}` }),
+            headers: new Headers({ 'x-api-key': config.API_KEY }),
         });
-        const res = await fetch(request);
-        if (!res.ok) {
-            console.error("Error Fetching roles for guild: ", guildId);
-            console.error("body: ", res.body);
+        try {
+            const res = await fetch(request);
+            if (!res.ok) {
+                console.error(`[${new Date().toISOString()}] Error Fetching roles for guild ${guildId}:`, res.status, res.statusText);
+                const errorBody = await res.text();
+                console.error(`[${new Date().toISOString()}] Error body:`, errorBody);
+                return [];
+            }
+            const json = await res.json();
+            
+            let roles: any[] = [];
+            if (Array.isArray(json)) {
+                roles = json;
+            } else if (json && json.roles && Array.isArray(json.roles)) {
+                roles = json.roles;
+            } else {
+                console.error(`[${new Date().toISOString()}] Invalid response format from API for roles:`, json);
+                return [];
+            }
+
+            return roles
+                .filter(role => role && role.discordRoleId)
+                .map(role => role.discordRoleId);
+        } catch (error) {
+            console.error(`[${new Date().toISOString()}] Error in fetchRoles:`, error);
             return [];
         }
-        const json = await res.json();
-        return json.roles;
     }
 
     static async fetchUser(userId: string): Promise<{
@@ -91,7 +112,7 @@ export class Api {
     } | null> {
         const request: RequestInfo = new Request(config.API_ENDPOINT + CONSTANTS.FETCH_USER + userId, {
             method: 'GET',
-            headers: new Headers({ 'Authorization': `Bearer ${config.API_KEY}` }),
+            headers: new Headers({ 'x-api-key': config.API_KEY }),
         });
         const res = await fetch(request);
         if (!res.ok) {
@@ -107,19 +128,94 @@ export class Api {
     }
 
     static async fetchUsersRoles(userId: string, guildId: string): Promise<string[]> {
-        const request: RequestInfo = new Request(config.API_ENDPOINT + CONSTANTS.FETCH_USERS_ROLES + `&discordId=${userId}&guildId=${guildId}`, {
-            method: 'GET',
-            headers: new Headers({ 'Authorization': `Bearer ${config.API_KEY}` }),
-        });
-        const res = await fetch(request);
-        if (!res.ok) {
-            console.error("Error Fetching roles for user: ", userId, ", guildId: ", guildId);
-            console.error("body: ", res.body);
+        if (!userId || !guildId) {
+            console.error(`[${new Date().toISOString()}] Invalid parameters for fetchUsersRoles: userId=${userId}, guildId=${guildId}`);
             return [];
         }
-        const json = await res.json();
 
-        return json.roles;
+        try {
+            const rolesUrl = new URL(config.API_ENDPOINT + CONSTANTS.FETCH_ROLES);
+            rolesUrl.searchParams.set('guildId', guildId);
+            const rolesRequest = new Request(rolesUrl, {
+                method: 'GET',
+                headers: new Headers({ 'x-api-key': config.API_KEY }),
+            });
+
+            const rolesRes = await fetch(rolesRequest);
+            if (!rolesRes.ok) {
+                console.error(`[${new Date().toISOString()}] Error fetching roles for guild ${guildId}:`, rolesRes.status, rolesRes.statusText);
+                return [];
+            }
+
+            const rolesJson = await rolesRes.json();
+            let roles: any[] = [];
+            if (Array.isArray(rolesJson)) {
+                roles = rolesJson;
+            } else if (rolesJson && rolesJson.roles && Array.isArray(rolesJson.roles)) {
+                roles = rolesJson.roles;
+            }
+
+            try {
+                const userRequest = new Request(config.API_ENDPOINT + CONSTANTS.FETCH_USER + userId, {
+                    method: 'GET',
+                    headers: new Headers({ 'x-api-key': config.API_KEY }),
+                });
+
+                const userRes = await fetch(userRequest);
+                if (!userRes.ok) {
+                    if (userRes.status !== 500) {
+                        console.error(`[${new Date().toISOString()}] Error fetching user details for ${userId}:`, userRes.status, userRes.statusText);
+                    }
+                    return [];
+                }
+
+                const userJson = await userRes.json();
+                if (!userJson || !userJson.users || userJson.users.length === 0) {
+                    return [];
+                }
+
+                const userData = userJson.users[0];
+                if (!userData) {
+                    return [];
+                }
+
+                const rolesToAssign: string[] = [];
+
+                const linkedRole = roles.find(role => role.assignOnVerification);
+                if (linkedRole && userData.isLinked) {
+                    rolesToAssign.push(linkedRole.discordRoleId);
+                }
+
+                const steamGroupRole = roles.find(role => role.assignOnGroupJoin);
+                if (steamGroupRole && userData.joinedSteamGroup) {
+                    rolesToAssign.push(steamGroupRole.discordRoleId);
+                }
+
+                const boosterRole = roles.find(role => role.assignOnBoost);
+                if (boosterRole && userData.isBoosting) {
+                    rolesToAssign.push(boosterRole.discordRoleId);
+                }
+
+                if (userData.roles && Array.isArray(userData.roles)) {
+                    for (const userRole of userData.roles) {
+                        const matchingRole = roles.find(role => role.id === userRole);
+                        if (matchingRole && matchingRole.discordRoleId) {
+                            rolesToAssign.push(matchingRole.discordRoleId);
+                        }
+                    }
+                }
+
+                return rolesToAssign;
+            } catch (error) {
+                if (error instanceof Error && !error.message.includes('500')) {
+                    console.error(`[${new Date().toISOString()}] Error in fetchUsersRoles:`, error);
+                }
+                return [];
+            }
+        } catch (error) {
+            console.error(`[${new Date().toISOString()}] Error in fetchUsersRoles:`, error);
+            return [];
+        }
     }
 
     static async fetchAndApplyUpdates(client: Client, lastFetch: string) {
@@ -128,12 +224,10 @@ export class Api {
         url.searchParams.set('startDate', lastFetch);
         const request: RequestInfo = new Request(url, {
             method: 'GET',
-            headers: new Headers({ 'Authorization': `Bearer ${config.API_KEY}` }),
+            headers: new Headers({ 'x-api-key': config.API_KEY }),
         });
         const res = await fetch(request);
         if (!res.ok) {
-            console.error("Error Fetching logs from API");
-            console.error("body: ", res.body);
             return;
         }
         const json = await res.json();
@@ -242,6 +336,7 @@ export class Api {
                     Api.ignoreRoleChange = true;
                     setTimeout(() => Api.ignoreRoleChange = false, 2000);
                     await member.roles.add(role);
+                    console.log(`[${new Date().toISOString()}] User ${member.user.tag} (${member.id}) linked their account and received the ${role.name} role`);
                 } catch (error) {
                     console.error(`[${new Date().toISOString()}] Error adding role to member ${member.displayName}: ${error}`);
                 }
@@ -253,6 +348,7 @@ export class Api {
                     Api.ignoreRoleChange = true;
                     setTimeout(() => Api.ignoreRoleChange = false, 2000);
                     await member.roles.remove(role);
+                    console.log(`[${new Date().toISOString()}] User ${member.user.tag} (${member.id}) unlinked their account and lost the ${role.name} role`);
                 } catch (error) {
                     console.error(`[${new Date().toISOString()}] Error removing role from member ${member.displayName}: ${error}`);
                 }
@@ -267,12 +363,10 @@ export class Api {
         url.searchParams.set('startDate', lastFetch);
         const request: RequestInfo = new Request(url, {
             method: 'GET',
-            headers: new Headers({ 'Authorization': `Bearer ${config.API_KEY}` }),
+            headers: new Headers({ 'x-api-key': config.API_KEY }),
         });
         const res = await fetch(request);
         if (!res.ok) {
-            console.error("Error Fetching map votes from API");
-            console.error("body: ", res.body);
             return;
         }
         const votes: MapVotes[] = await res.json();
@@ -283,48 +377,72 @@ export class Api {
             try {
                 const guild = client.guilds.cache.get(jsonChannel.guild);
                 if (!guild) {
-                    console.error(`Guild ${jsonChannel.guild} not found!`);
                     continue;
                 }
-                const channel = await guild.channels.fetch(jsonChannel.channel).catch(error => {
-                    console.error(`Error fetching channel ${jsonChannel.channel} on guild ${jsonChannel.guild}: ${error}`);
-                    return null;
-                });
+                const channel = await guild.channels.fetch(jsonChannel.channel).catch(() => null);
                 if (!channel) {
-                    console.error(`Channel ${jsonChannel.channel} not found on guild ${jsonChannel.guild}!`);
                     continue;
                 }
                 channels.push(channel);
             } catch (error) {
-                console.error(`Error processing channel ${jsonChannel.channel} on guild ${jsonChannel.guild}: ${error}`);
+                continue;
             }
         }
+
         for (const vote of votes) {
-            const hexString = "0x" + vote.color.replace("0x", "").replace("#", "").toUpperCase();
-            const hexColour = Number(hexString);
-            for (const channel of channels) {
-                if (channel.isSendable()) {
-                    const embed = new EmbedBuilder()
-                        .setTitle(vote.title)
-                        .setDescription(vote.description)
-                        .setImage(vote.image)
-                        .setColor(hexColour)
-                        .addFields(vote.fields);
+            if (!vote || typeof vote !== 'object') {
+                continue;
+            }
 
-                    const mapButton = new ButtonBuilder()
-                        .setLabel("View on RustMaps.com")
-                        .setStyle(ButtonStyle.Link)
-                        .setURL(vote.url);
+            if (!vote.map_options || !Array.isArray(vote.map_options) || vote.map_options.length === 0) {
+                continue;
+            }
 
-                    const siteButton = new ButtonBuilder()
-                        .setLabel("View votes on site")
-                        .setStyle(ButtonStyle.Link)
-                        .setURL(`${config.API_ENDPOINT.replace("/api", "")}/maps/%7B${vote.mapId}%7D`);
+            for (const mapOption of vote.map_options) {
+                if (!mapOption || !mapOption.url || !mapOption.imageUrl) {
+                    continue;
+                }
 
-                    const row = new ActionRowBuilder<MessageActionRowComponentBuilder>()
-                        .addComponents([mapButton, siteButton]);
+                const title = `Map Vote for ${vote.server?.server_name || 'Server'} - Option ${mapOption.order + 1}`;
+                const description = `Vote ends: ${new Date(vote.vote_end).toLocaleString()}\nMap size: ${mapOption.size}\nSeed: ${mapOption.seed}`;
 
-                    channel.send({ embeds: [embed], components: [row] });
+                for (const channel of channels) {
+                    if (channel.isSendable()) {
+                        const embed = new EmbedBuilder()
+                            .setTitle(title)
+                            .setDescription(description)
+                            .setColor(0x0099FF)
+                            .setImage(mapOption.imageUrl);
+
+                        const mapButton = new ButtonBuilder()
+                            .setLabel("View on RustMaps.com")
+                            .setStyle(ButtonStyle.Link)
+                            .setURL(mapOption.url);
+
+                        const siteButton = new ButtonBuilder()
+                            .setLabel("View votes on site")
+                            .setStyle(ButtonStyle.Link)
+                            .setURL(`${config.API_ENDPOINT.replace("/api", "")}/maps/${vote.id}`);
+
+                        const row = new ActionRowBuilder<MessageActionRowComponentBuilder>()
+                            .addComponents([mapButton, siteButton]);
+
+                        try {
+                            const messages = await channel.messages.fetch({ limit: 100 });
+                            const existingMessage = messages.find(msg => 
+                                msg.embeds[0]?.title === title && 
+                                msg.author.id === client.user?.id
+                            );
+
+                            if (existingMessage) {
+                                await existingMessage.edit({ embeds: [embed], components: [row] });
+                            } else {
+                                await channel.send({ embeds: [embed], components: [row] });
+                            }
+                        } catch (error) {
+                            continue;
+                        }
+                    }
                 }
             }
         }
@@ -337,7 +455,7 @@ export class Api {
         const url = new URL(config.API_ENDPOINT + CONSTANTS.GUILDS);
         const request: RequestInfo = new Request(url, {
             method: 'GET',
-            headers: new Headers({ 'Authorization': `Bearer ${config.API_KEY}` }),
+            headers: new Headers({ 'x-api-key': config.API_KEY }),
         });
         const res = await fetch(request);
         if (!res.ok) {
@@ -356,24 +474,70 @@ export class Api {
         const url = new URL(config.API_ENDPOINT + CONSTANTS.FETCH_LINKED_USERS);
         const request: RequestInfo = new Request(url, {
             method: 'GET',
-            headers: new Headers({ 'Authorization': `Bearer ${config.API_KEY}` }),
+            headers: new Headers({ 'x-api-key': config.API_KEY }),
         });
 
-        const res = await fetch(request);
-        if (!res.ok) {
-            console.error("Error Fetching linked users");
-            console.error("body: ", res.body);
+        try {
+            const res = await fetch(request);
+            if (!res.ok) {
+                console.error(`[${new Date().toISOString()}] Error Fetching linked users:`, res.status, res.statusText);
+                const errorBody = await res.text();
+                console.error(`[${new Date().toISOString()}] Error body:`, errorBody);
+                return [];
+            }
+            const json = await res.json();
+            
+            let users: any[] = [];
+            if (Array.isArray(json)) {
+                users = json;
+            } else if (json && json.users && Array.isArray(json.users)) {
+                users = json.users;
+            } else {
+                console.error(`[${new Date().toISOString()}] Invalid response format from API:`, json);
+                return [];
+            }
+
+            const userIds: string[] = [];
+            for (const user of users) {
+                try {
+                    const userId = typeof user === 'string' ? user : user.id;
+                    if (!userId) continue;
+
+                    const userRequest = new Request(config.API_ENDPOINT + CONSTANTS.FETCH_USER + userId, {
+                        method: 'GET',
+                        headers: new Headers({ 'x-api-key': config.API_KEY }),
+                    });
+
+                    const userRes = await fetch(userRequest);
+                    if (!userRes.ok) {
+                        console.error(`[${new Date().toISOString()}] Error fetching user details for ${userId}:`, userRes.status, userRes.statusText);
+                        continue;
+                    }
+
+                    const userJson = await userRes.json();
+                    if (userJson && userJson.users && userJson.users.length > 0) {
+                        const userData = userJson.users[0];
+                        if (userData && userData.discordId) {
+                            userIds.push(userData.discordId);
+                        }
+                    }
+                } catch (error) {
+                    console.error(`[${new Date().toISOString()}] Error processing user ${user}:`, error);
+                }
+            }
+
+            return userIds;
+        } catch (error) {
+            console.error(`[${new Date().toISOString()}] Error in fetchLinkedUsers:`, error);
             return [];
         }
-        const json: { users: string[] } = await res.json();
-        return json.users;
     }
 
     static async fetchLinkedCount(): Promise<number> {
         const url = new URL(config.API_ENDPOINT + CONSTANTS.FETCH_LINKED_COUNT);
         const request: RequestInfo = new Request(url, {
             method: 'GET',
-            headers: new Headers({ 'Authorization': `Bearer ${config.API_KEY}` }),
+            headers: new Headers({ 'x-api-key': config.API_KEY }),
         });
         const res = await fetch(request);
         if (!res.ok) {
@@ -415,11 +579,28 @@ interface Log {
 }
 
 interface MapVotes {
-    title: string;
-    description: string;
-    mapId: string;
-    image: string;
-    url: string;
-    color: string;
-    fields: { name: string, value: string };
+    id: string;
+    enabled: boolean;
+    server_id: string;
+    vote_start: string;
+    vote_end: string;
+    map_start: string;
+    created_at: string;
+    updated_at: string;
+    map_options: {
+        id: string;
+        order: number;
+        size: number;
+        seed: number;
+        isStaging: boolean;
+        url: string;
+        rawImageUrl: string;
+        imageUrl: string;
+        imageIconUrl: string;
+        thumbnailUrl: string;
+        mapVoteId: string;
+    }[];
+    server: {
+        server_name: string;
+    };
 }

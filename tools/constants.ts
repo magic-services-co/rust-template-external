@@ -1,5 +1,5 @@
 export const CONSTANTS = {
-    FETCH_ROLES: '/admin/roles?discordId=',
+    FETCH_ROLES: '/admin/roles?guildId=',
     FETCH_USER: '/user/search/',
     FETCH_USERS_ROLES: '/user?type=discord',
     UPDATE_USER_ROLES: '/user?type=discord',

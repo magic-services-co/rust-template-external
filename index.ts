@@ -32,28 +32,45 @@ async function start() {
         setInterval(async () => {
             try {
                 const linkedMembers = await Api.fetchLinkedUsers();
+                
                 for (const guildId of config.GUILD_IDS) {
                     const guild = client.guilds.cache.get(guildId);
                     if (!guild) continue;
 
-                    const rolesToTrack = await Api.fetchRoles(guildId);
-                    for (const memberId of linkedMembers) {
-                        const member = await guild.members.fetch(memberId).catch(() => null);
-                        if (!member) continue;
+                    try {
+                        const rolesToTrack = await Api.fetchRoles(guildId);
+                        const members = await guild.members.fetch();
+                        
+                        for (const [memberId, member] of members) {
+                            try {
+                                if (!member.roles || !member.roles.cache) continue;
 
-                        const membersRoles = await Api.fetchUsersRoles(member.id, guildId);
+                                const membersRoles = await Api.fetchUsersRoles(member.id, guildId);
+                                if (!Array.isArray(membersRoles)) continue;
 
-                        for (const roleId of membersRoles) {
-                            if (!member.roles.cache.has(roleId) && rolesToTrack.includes(roleId)) {
-                                await Api.handleInstantRoleUpdate(client, member.id, roleId, guildId, "add");
+                                for (const roleId of membersRoles) {
+                                    if (!roleId || typeof roleId !== 'string') continue;
+                                    const role = guild.roles.cache.get(roleId);
+                                    if (!role) continue;
+                                    if (!member.roles.cache.has(roleId) && rolesToTrack.includes(roleId)) {
+                                        await Api.handleInstantRoleUpdate(client, member.id, roleId, guildId, "add");
+                                    }
+                                }
+
+                                for (const roleId of rolesToTrack) {
+                                    if (!roleId || typeof roleId !== 'string') continue;
+                                    const role = guild.roles.cache.get(roleId);
+                                    if (!role) continue;
+                                    if (member.roles.cache.has(roleId) && !membersRoles.includes(roleId)) {
+                                        await Api.handleInstantRoleUpdate(client, member.id, roleId, guildId, "remove");
+                                    }
+                                }
+                            } catch (error) {
+                                console.error(`[${new Date().toISOString()}] Error processing member ${memberId}:`, error);
                             }
                         }
-
-                        for (const roleId of rolesToTrack) {
-                            if (member.roles.cache.has(roleId) && !membersRoles.includes(roleId)) {
-                                await Api.handleInstantRoleUpdate(client, member.id, roleId, guildId, "remove");
-                            }
-                        }
+                    } catch (error) {
+                        console.error(`[${new Date().toISOString()}] Error processing guild ${guildId}:`, error);
                     }
                 }
             } catch (error) {
@@ -101,10 +118,8 @@ async function start() {
 
     await importx(`${dirname(import.meta.url)}/commands/**/*.{js,ts}`);
     await importx(`${dirname(import.meta.url)}/events/**/*.{js,ts}`);
-    // Import addons
     await importx(`${dirname(import.meta.url)}/ADDONS/**/*.{js,ts}`);
 
-    // let's start the bot
     if (!config.BOT_TOKEN) {
         throw Error("Could not find BOT_TOKEN in config.json");
     }
