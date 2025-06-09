@@ -70,7 +70,7 @@ async function start() {
                         const members = await guild.members.fetch();
                         const memberIds = Array.from(members.keys());
                         
-                        const memberRolesMap = await Api.batchFetchUsersRoles(memberIds, guildId);
+                        const memberRolesMap = await Api.batchFetchUsersRoles(memberIds, guildId, client);
                         
                         for (const [memberId, member] of members) {
                             try {
@@ -78,15 +78,6 @@ async function start() {
 
                                 const membersRoles = memberRolesMap.get(memberId) || [];
                                 
-                                for (const roleId of membersRoles) {
-                                    if (!roleId || typeof roleId !== 'string') continue;
-                                    const role = guild.roles.cache.get(roleId);
-                                    if (!role) continue;
-                                    if (!member.roles.cache.has(roleId) && rolesToTrack.includes(roleId)) {
-                                        await Api.handleInstantRoleUpdate(client, member.id, roleId, guildId, "add");
-                                    }
-                                }
-
                                 for (const roleId of rolesToTrack) {
                                     if (!roleId || typeof roleId !== 'string') continue;
                                     const role = guild.roles.cache.get(roleId);

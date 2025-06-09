@@ -633,7 +633,7 @@ export class Api {
         return rolesMap;
     }
 
-    static async batchFetchUsersRoles(userIds: string[], guildId: string): Promise<Map<string, string[]>> {
+    static async batchFetchUsersRoles(userIds: string[], guildId: string, client?: Client): Promise<Map<string, string[]>> {
         const rolesMap = new Map<string, string[]>();
         const uncachedUsers: string[] = [];
         const BATCH_SIZE = 50;
@@ -657,7 +657,7 @@ export class Api {
             try {
                 const url = new URL(config.API_ENDPOINT + CONSTANTS.FETCH_USERS_ROLES);
                 const body = { ids: batch, guildId };
-                console.log(`[DEBUG] Fetching roles batch (size: ${batch.length}) for guild ${guildId}`);
+                console.log(`Fetching roles batch (size: ${batch.length}) for guild ${guildId}`);
 
                 const request = new Request(url, {
                     method: 'POST',
@@ -688,11 +688,21 @@ export class Api {
                 }
 
                 const json = await res.json();
+
+                if (Array.isArray(json) && json.length === 0) {
+                    console.warn(
+                        `Received empty roles array for batch (guild ${guildId}).`
+                    );
+                }
+
                 if (Array.isArray(json)) {
                     for (const userRole of json) {
                         if (userRole && userRole.userId && userRole.roles) {
                             rolesMap.set(userRole.userId, userRole.roles);
-                            Cache.set(`user_roles_${userRole.userId}_${guildId}`, userRole.roles);
+                            Cache.set(
+                                `user_roles_${userRole.userId}_${guildId}`,
+                                userRole.roles
+                            );
                         }
                     }
                 }
@@ -704,6 +714,27 @@ export class Api {
                         message: error.message,
                         stack: error.stack
                     });
+                }
+            }
+        }
+        if (client) {
+            const guild = client.guilds.cache.get(guildId);
+            if (guild) {
+                for (const [userId, roleIds] of rolesMap) {
+                    try {
+                        const member = guild.members.cache.get(userId) ?? await guild.members.fetch(userId).catch(() => null);
+                        if (!member) continue;
+
+                        const toAdd = roleIds.filter(rid => !member.roles.cache.has(rid));
+                        if (toAdd.length > 0) {
+                            Api.ignoreRoleChange = true;
+                            setTimeout(() => (Api.ignoreRoleChange = false), 2000);
+                            await member.roles.add(toAdd).catch(() => null);
+                            console.log(`Assigned ${toAdd.length} role(s) to ${member.user.tag}`);
+                        }
+                    } catch (error) {
+                        console.error(`[${new Date().toISOString()}] Failed to sync roles for user ${userId}:`, error);
+                    }
                 }
             }
         }
