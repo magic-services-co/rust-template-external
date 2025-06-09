@@ -3,11 +3,45 @@ import config from '../config.json';
 import type { Client } from "discordx";
 import { EmbedBuilder, ButtonBuilder, ButtonStyle, ActionRowBuilder, type Guild, type GuildBasedChannel, type MessageActionRowComponentBuilder } from "discord.js";
 
+interface CacheEntry {
+    data: any;
+    timestamp: number;
+    expiresIn: number;
+}
+
+class Cache {
+    private static cache: Map<string, CacheEntry> = new Map();
+    private static readonly DEFAULT_EXPIRY = 5 * 60 * 1000; 
+
+    static set(key: string, data: any, expiresIn: number = this.DEFAULT_EXPIRY): void {
+        this.cache.set(key, {
+            data,
+            timestamp: Date.now(),
+            expiresIn
+        });
+    }
+
+    static get(key: string): any | null {
+        const entry = this.cache.get(key);
+        if (!entry) return null;
+
+        if (Date.now() - entry.timestamp > entry.expiresIn) {
+            this.cache.delete(key);
+            return null;
+        }
+
+        return entry.data;
+    }
+
+    static clear(): void {
+        this.cache.clear();
+    }
+}
+
 export class Api {
     static ignoreRoleChange: boolean;
 
     static sendRoleUpdate(transaction: Transaction): void {
-
         const headers: Headers = new Headers()
         headers.set('Content-Type', 'application/json');
         headers.set('Accept', 'application/json');
@@ -547,6 +581,134 @@ export class Api {
         }
         const json: { count: number } = await res.json();
         return json.count;
+    }
+
+    static async batchFetchRoles(guildIds: string[]): Promise<Map<string, string[]>> {
+        const rolesMap = new Map<string, string[]>();
+        const uncachedGuilds: string[] = [];
+
+        for (const guildId of guildIds) {
+            const cachedRoles = Cache.get(`roles_${guildId}`);
+            if (cachedRoles) {
+                rolesMap.set(guildId, cachedRoles);
+            } else {
+                uncachedGuilds.push(guildId);
+            }
+        }
+
+        if (uncachedGuilds.length === 0) {
+            return rolesMap;
+        }
+
+        try {
+            const url = new URL(config.API_ENDPOINT + CONSTANTS.FETCH_ROLES);
+            url.searchParams.set('guildIds', uncachedGuilds.join(','));
+            
+            const request = new Request(url, {
+                method: 'GET',
+                headers: new Headers({ 'x-api-key': config.API_KEY }),
+            });
+
+            const res = await fetch(request);
+            if (!res.ok) {
+                console.error(`[${new Date().toISOString()}] Error batch fetching roles:`, res.status, res.statusText);
+                return rolesMap;
+            }
+
+            const json = await res.json();
+            if (Array.isArray(json)) {
+                for (const role of json) {
+                    if (role && role.discordRoleId && role.guildId) {
+                        const guildRoles = rolesMap.get(role.guildId) || [];
+                        guildRoles.push(role.discordRoleId);
+                        rolesMap.set(role.guildId, guildRoles);
+                        Cache.set(`roles_${role.guildId}`, guildRoles);
+                    }
+                }
+            }
+        } catch (error) {
+            console.error(`[${new Date().toISOString()}] Error in batchFetchRoles:`, error);
+        }
+
+        return rolesMap;
+    }
+
+    static async batchFetchUsersRoles(userIds: string[], guildId: string): Promise<Map<string, string[]>> {
+        const rolesMap = new Map<string, string[]>();
+        const uncachedUsers: string[] = [];
+        const BATCH_SIZE = 50;
+
+        for (const userId of userIds) {
+            const cacheKey = `user_roles_${userId}_${guildId}`;
+            const cachedRoles = Cache.get(cacheKey);
+            if (cachedRoles) {
+                rolesMap.set(userId, cachedRoles);
+            } else {
+                uncachedUsers.push(userId);
+            }
+        }
+
+        if (uncachedUsers.length === 0) {
+            return rolesMap;
+        }
+
+        for (let i = 0; i < uncachedUsers.length; i += BATCH_SIZE) {
+            const batch = uncachedUsers.slice(i, i + BATCH_SIZE);
+            try {
+                const url = new URL(config.API_ENDPOINT + CONSTANTS.FETCH_USERS_ROLES);
+                const body = { ids: batch, guildId };
+                console.log(`[DEBUG] Fetching roles batch (size: ${batch.length}) for guild ${guildId}`);
+
+                const request = new Request(url, {
+                    method: 'POST',
+                    headers: new Headers({
+                        'x-api-key': config.API_KEY,
+                        'Content-Type': 'application/json'
+                    }),
+                    body: JSON.stringify(body)
+                });
+
+                const res = await fetch(request);
+                if (!res.ok) {
+                    console.error(`[${new Date().toISOString()}] Error batch fetching user roles:`, {
+                        status: res.status,
+                        statusText: res.statusText,
+                        headers: Object.fromEntries(res.headers.entries()),
+                        url: res.url
+                    });
+                    
+                    try {
+                        const errorBody = await res.text();
+                        console.error(`[${new Date().toISOString()}] Error response body:`, errorBody);
+                    } catch (e) {
+                        console.error(`[${new Date().toISOString()}] Could not read error response body:`, e);
+                    }
+                    
+                    continue;
+                }
+
+                const json = await res.json();
+                if (Array.isArray(json)) {
+                    for (const userRole of json) {
+                        if (userRole && userRole.userId && userRole.roles) {
+                            rolesMap.set(userRole.userId, userRole.roles);
+                            Cache.set(`user_roles_${userRole.userId}_${guildId}`, userRole.roles);
+                        }
+                    }
+                }
+            } catch (error) {
+                console.error(`[${new Date().toISOString()}] Error in batchFetchUsersRoles:`, error);
+                if (error instanceof Error) {
+                    console.error(`[${new Date().toISOString()}] Error details:`, {
+                        name: error.name,
+                        message: error.message,
+                        stack: error.stack
+                    });
+                }
+            }
+        }
+
+        return rolesMap;
     }
 }
 

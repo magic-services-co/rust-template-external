@@ -13,6 +13,27 @@ const schema = {
 
 const storage = new Conf({projectName: 'Linking-bot', schema});
 
+const RATE_LIMIT = {
+    maxRequests: 50,
+    timeWindow: 60000, 
+    requests: new Map<string, number[]>()
+};
+
+function isRateLimited(endpoint: string): boolean {
+    const now = Date.now();
+    const requests = RATE_LIMIT.requests.get(endpoint) || [];
+    
+    const recentRequests = requests.filter(time => now - time < RATE_LIMIT.timeWindow);
+    RATE_LIMIT.requests.set(endpoint, recentRequests);
+    
+    if (recentRequests.length >= RATE_LIMIT.maxRequests) {
+        return true;
+    }
+    
+    recentRequests.push(now);
+    return false;
+}
+
 async function start() {
     const client = new Client({
         botId: config.CLIENT_ID,
@@ -31,6 +52,11 @@ async function start() {
         
         setInterval(async () => {
             try {
+                if (isRateLimited('sync')) {
+                    console.log(`[${new Date().toISOString()}] Rate limit reached, skipping sync cycle`);
+                    return;
+                }
+
                 const linkedMembers = await Api.fetchLinkedUsers();
                 
                 for (const guildId of config.GUILD_IDS) {
@@ -38,16 +64,20 @@ async function start() {
                     if (!guild) continue;
 
                     try {
-                        const rolesToTrack = await Api.fetchRoles(guildId);
+                        const rolesMap = await Api.batchFetchRoles([guildId]);
+                        const rolesToTrack = rolesMap.get(guildId) || [];
+                        
                         const members = await guild.members.fetch();
+                        const memberIds = Array.from(members.keys());
+                        
+                        const memberRolesMap = await Api.batchFetchUsersRoles(memberIds, guildId);
                         
                         for (const [memberId, member] of members) {
                             try {
                                 if (!member.roles || !member.roles.cache) continue;
 
-                                const membersRoles = await Api.fetchUsersRoles(member.id, guildId);
-                                if (!Array.isArray(membersRoles)) continue;
-
+                                const membersRoles = memberRolesMap.get(memberId) || [];
+                                
                                 for (const roleId of membersRoles) {
                                     if (!roleId || typeof roleId !== 'string') continue;
                                     const role = guild.roles.cache.get(roleId);
@@ -76,7 +106,7 @@ async function start() {
             } catch (error) {
                 console.error(`[${new Date().toISOString()}] Error in periodic role sync:`, error);
             }
-        }, 5000); 
+        }, 30000); 
 
         setInterval(async () => {
             const lastFetch = storage.get<string, string>("lastFetch", new Date().toISOString());

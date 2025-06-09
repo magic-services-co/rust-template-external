@@ -1,18 +1,24 @@
 import {ApplicationCommandOptionType, CommandInteraction, EmbedBuilder, User} from "discord.js";
 import {Discord, Slash, SlashOption, Guard} from "discordx";
 import {Api} from "../tools/Api.ts";
-import {PermissionGuard, type PermissionHandler, type PermissionsType} from "@discordx/utilities";
+import {PermissionGuard} from "@discordx/utilities";
 import config from '../config.json';
 
 @Discord()
-class ViewMember {
+export class ViewMember {
     private regex = /[A-F0-9]{6}/;
-    private hexString = "0x" + config.EMBED_HEX.replace("0x", "").replace("#", "").toUpperCase();
-    hexColour = Number(this.regex.test(this.hexString) ? this.hexString : '0099FF');
+    private hexColour: number;
+
+    constructor() {
+        const defaultColor = '0099FF';
+        const embedHex = config?.EMBED_HEX || defaultColor;
+        const hexString = "0x" + embedHex.replace("0x", "").replace("#", "").toUpperCase();
+        this.hexColour = Number(this.regex.test(hexString) ? hexString : defaultColor);
+    }
+
     @Slash({description: 'View Member info'})
     @Guard(
-        // @ts-ignore
-        PermissionGuard(ViewMember.resolvePermission, {
+        PermissionGuard(["SendMessages"], {
             content: "You do not have permission to view member information!",
         }),
     )
@@ -48,6 +54,7 @@ class ViewMember {
             }
             if (!userInfo.isLinked) {
                 interaction.reply("User not linked to discord!");
+                return;
             }
             const updateEmbed = new EmbedBuilder()
                 .setColor(this.hexColour)
@@ -71,19 +78,5 @@ class ViewMember {
         } catch (e) {
             interaction.reply({content: `Failed to get user ${userId}: ${e}`, ephemeral: true});
         }
-    }
-
-    private static resolvePermission(
-        interaction: PermissionHandler,
-    ): Promise<PermissionsType> {
-        if (interaction instanceof CommandInteraction) {
-            for (const role of config.VIEW_MEMBERS_ROLES) {
-                if (interaction.guild?.roles.cache.get(role)?.members.has(interaction.user.id)) {
-                    // Everyone should have this permission
-                    return Promise.resolve(["SendMessages"]);
-                }
-            }
-        }
-        return Promise.resolve(["Administrator"]);
     }
 }
