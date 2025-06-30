@@ -627,7 +627,6 @@ export class Api {
             if (Array.isArray(json)) {
                 for (const role of json) {
                     if (role && role.discordRoleIds && role.discordGuildIds) {
-                        // Handle the new format where discordRoleIds and discordGuildIds are arrays
                         for (let i = 0; i < role.discordRoleIds.length; i++) {
                             const roleId = role.discordRoleIds[i];
                             const guildId = role.discordGuildIds[i];
@@ -640,7 +639,6 @@ export class Api {
                             }
                         }
                     } else if (role && role.discordRoleId && role.guildId) {
-                        // Handle the old format for backward compatibility
                         const guildRoles = rolesMap.get(role.guildId) || [];
                         guildRoles.push(role.discordRoleId);
                         rolesMap.set(role.guildId, guildRoles);
@@ -648,7 +646,6 @@ export class Api {
                     }
                 }
                 
-                // Cache the roles for each guild
                 for (const [guildId, roles] of rolesMap) {
                     Cache.set(`roles_${guildId}`, roles);
                 }
@@ -791,15 +788,12 @@ export class Api {
 
             console.log(`[${new Date().toISOString()}] Processing ${usersWithRoles.length} users for role assignment`);
 
-            // Get all tracked roles for all guilds to handle unlinked users
             const allGuildIds = new Set<string>();
             
-            // Always include configured guilds to ensure role removal works
             for (const guildId of config.GUILD_IDS) {
                 allGuildIds.add(guildId);
             }
             
-            // Add guilds from user roles
             for (const user of usersWithRoles) {
                 for (const role of user.roles) {
                     if (role.discordGuildIds) {
@@ -815,7 +809,6 @@ export class Api {
             const trackedRolesMap = await Api.batchFetchRoles(Array.from(allGuildIds));
             const linkedUserIds = new Set(usersWithRoles.map(user => user.discordId));
 
-            // Handle unlinked users - remove their roles
             for (const guildId of allGuildIds) {
                 try {
                     const guild = client.guilds.cache.get(guildId);
@@ -825,9 +818,7 @@ export class Api {
                     const members = await guild.members.fetch();
                     
                     for (const [memberId, member] of members) {
-                        // Check if this member is no longer linked
                         if (!linkedUserIds.has(memberId)) {
-                            // Remove tracked roles from unlinked users
                             for (const roleId of trackedRoles) {
                                 if (member.roles.cache.has(roleId)) {
                                     await this.removeRoleFromUser(client, { discordId: memberId } as UserData, roleId, guildId);
@@ -841,7 +832,6 @@ export class Api {
                 }
             }
 
-            // Process linked users
             for (const user of usersWithRoles) {
                 try {
                     await this.assignUserRoles(client, user);
@@ -1013,7 +1003,6 @@ export class Api {
         console.log(`[${new Date().toISOString()}] Starting role removal check for user ${userId}`);
         console.log(`[${new Date().toISOString()}] Guilds to check:`, Array.from(rolesToAssign.keys()));
         
-        // Get all tracked roles for each guild
         const trackedRolesMap = await Api.batchFetchRoles(Array.from(rolesToAssign.keys()));
         console.log(`[${new Date().toISOString()}] Tracked roles map:`, Object.fromEntries(trackedRolesMap));
         
@@ -1038,12 +1027,9 @@ export class Api {
                 console.log(`[${new Date().toISOString()}] Tracked roles in this guild:`, trackedRoles);
                 console.log(`[${new Date().toISOString()}] User's current roles:`, Array.from(member.roles.cache.keys()));
                 
-                // Check each tracked role the user currently has
                 for (const roleId of trackedRoles) {
                     if (member.roles.cache.has(roleId)) {
-                        // Check if this role should be assigned according to the website
                         if (!assignedRoles.has(roleId)) {
-                            // User has this role but shouldn't according to website - remove it
                             console.log(`[${new Date().toISOString()}] About to remove role ${roleId} from ${member.user.tag}`);
                             await this.removeRoleFromUser(client, user, roleId, guildId);
                             const role = guild.roles.cache.get(roleId);
