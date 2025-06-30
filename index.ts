@@ -50,6 +50,9 @@ async function start() {
         console.log(">> Bot started");
         await Api.fetchAndUpdateGuilds(client);
         
+        // Initial role assignment based on user data structure
+        await Api.fetchAndAssignUserRoles(client);
+        
         setInterval(async () => {
             try {
                 if (isRateLimited('sync')) {
@@ -98,6 +101,19 @@ async function start() {
                 console.error(`[${new Date().toISOString()}] Error in periodic role sync:`, error);
             }
         }, 30000); 
+
+        // Periodic role assignment based on user data structure
+        setInterval(async () => {
+            try {
+                if (isRateLimited('user_roles')) {
+                    console.log(`[${new Date().toISOString()}] Rate limit reached, skipping user role assignment cycle`);
+                    return;
+                }
+                await Api.fetchAndAssignUserRoles(client);
+            } catch (error) {
+                console.error(`[${new Date().toISOString()}] Error in periodic user role assignment:`, error);
+            }
+        }, 60000); // Run every minute
 
         setInterval(async () => {
             const lastFetch = storage.get<string, string>("lastFetch", new Date().toISOString());
