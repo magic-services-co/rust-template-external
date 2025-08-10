@@ -10,6 +10,10 @@ class RoleTracking {
         client: Client,
         _guardPayload: any
     ) {
+        if (Api.ignoreRoleChange) {
+            return;
+        }
+
         const changed = oldMember.roles.cache.size != newMember.roles.cache.size;
         const linkedMembers = await Api.fetchLinkedUsers();
 
@@ -21,10 +25,9 @@ class RoleTracking {
             return;
         }
 
-        if (Api.ignoreRoleChange) {
-            return;
-        }
-
+        const addedRoles = newMember.roles.cache.difference(oldMember.roles.cache);
+        const removedRoles = oldMember.roles.cache.difference(newMember.roles.cache);
+        
         const rolesToTrack = await Api.fetchRoles(newMember.guild.id);
         if (rolesToTrack.length == 0) {
             return;
@@ -43,17 +46,41 @@ class RoleTracking {
             }
         }
 
-        const newRole = newMember.roles.cache.difference(oldMember.roles.cache).first();
-        if (!newRole || !rolesToTrack.includes(newRole.id)) {
-            return;
+        for (const [roleId, role] of addedRoles) {
+            if (rolesToTrack.includes(roleId)) {
+                const userShouldHaveRole = membersRoles.includes(roleId);
+                
+                if (!userShouldHaveRole) {
+                    console.log(`[${new Date().toISOString()}] Removing incorrectly assigned role ${role.name} from ${newMember.user.tag}`);
+                    await Api.handleInstantRoleUpdate(client, newMember.id, roleId, newMember.guild.id, "remove");
+                } else {
+                }
+            }
         }
 
-        const added = oldMember.roles.cache.size < newMember.roles.cache.size;
+        for (const [roleId, role] of removedRoles) {
+            if (rolesToTrack.includes(roleId)) {
+                const userShouldHaveRole = membersRoles.includes(roleId);
+                
+                if (userShouldHaveRole) {
+                    console.log(`[${new Date().toISOString()}] Re-adding incorrectly removed role ${role.name} to ${newMember.user.tag}`);
+                    await Api.handleInstantRoleUpdate(client, newMember.id, roleId, newMember.guild.id, "add");
+                } else {
+                }
+            }
+        }
 
-        Api.sendRoleUpdate(new Transaction(newMember.id, newRole.id, newMember.guild.id, added));
-
-        if (!added && membersRoles.includes(newRole.id)) {
-            await Api.handleInstantRoleUpdate(client, newMember.id, newRole.id, newMember.guild.id, "add");
+        if (addedRoles.size > 0 || removedRoles.size > 0) {
+            for (const [roleId] of addedRoles) {
+                if (rolesToTrack.includes(roleId)) {
+                    Api.sendRoleUpdate(new Transaction(newMember.id, roleId, newMember.guild.id, true));
+                }
+            }
+            for (const [roleId] of removedRoles) {
+                if (rolesToTrack.includes(roleId)) {
+                    Api.sendRoleUpdate(new Transaction(newMember.id, roleId, newMember.guild.id, false));
+                }
+            }
         }
     }
 

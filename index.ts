@@ -80,13 +80,27 @@ async function start() {
                                 if (!member.roles || !member.roles.cache) continue;
 
                                 const membersRoles = memberRolesMap.get(memberId) || [];
+                                const isLinked = linkedMembers.includes(memberId);
                                 
-                                for (const roleId of rolesToTrack) {
-                                    if (!roleId || typeof roleId !== 'string') continue;
-                                    const role = guild.roles.cache.get(roleId);
-                                    if (!role) continue;
-                                    if (member.roles.cache.has(roleId) && !membersRoles.includes(roleId)) {
-                                        await Api.handleInstantRoleUpdate(client, member.id, roleId, guildId, "remove");
+                                if (!isLinked) {
+                                    for (const roleId of rolesToTrack) {
+                                        if (!roleId || typeof roleId !== 'string') continue;
+                                        const role = guild.roles.cache.get(roleId);
+                                        if (!role) continue;
+                                        if (member.roles.cache.has(roleId)) {
+                                            console.log(`[${new Date().toISOString()}] Removing role ${role.name} from unlinked user ${member.user.tag}`);
+                                            await Api.handleInstantRoleUpdate(client, member.id, roleId, guildId, "remove");
+                                        }
+                                    }
+                                } else {
+                                    for (const roleId of membersRoles) {
+                                        if (!member.roles.cache.has(roleId)) {
+                                            const role = guild.roles.cache.get(roleId);
+                                            if (role) {
+                                                console.log(`[${new Date().toISOString()}] Adding missing role ${role.name} to linked user ${member.user.tag}`);
+                                                await Api.handleInstantRoleUpdate(client, member.id, roleId, guildId, "add");
+                                            }
+                                        }
                                     }
                                 }
                             } catch (error) {
@@ -100,9 +114,8 @@ async function start() {
             } catch (error) {
                 console.error(`[${new Date().toISOString()}] Error in periodic role sync:`, error);
             }
-        }, 30000); 
+        }, 30000);
 
-        // Periodic role assignment based on user data structure
         setInterval(async () => {
             try {
                 if (isRateLimited('user_roles')) {
