@@ -286,7 +286,6 @@ export class Api {
                 }
             }
         }
-        // Only log when there are actual updates to process
         if (logs.length > 0) {
             console.log(`[${new Date().toISOString()}] Processed ${logs.length} update(s) from API`);
         }
@@ -337,7 +336,6 @@ export class Api {
                 }
             } else if (log.action == "USER_UPDATED" && config.SET_DISCORD_NAME_TO_STEAM_NAME) {
                 try {
-                    // Only log when actually changing the nickname
                     if (member.nickname !== log.name) {
                         console.log(`[${new Date().toISOString()}] Updating nickname from "${member.nickname}" to "${log.name}" for ${member.displayName} in ${guild.name}`);
                         await member.setNickname(log.name);
@@ -355,6 +353,12 @@ export class Api {
         const guild = client.guilds.cache.get(guildId);
         if (!guild) {
             console.error(`[${new Date().toISOString()}] Guild ${guildId} not found!`);
+            return;
+        }
+
+        const botMember = guild.members.cache.get(client.user?.id || '');
+        if (!botMember?.permissions.has('ManageRoles')) {
+            console.error(`[${new Date().toISOString()}] Bot missing 'Manage Roles' permission in guild ${guild.name} (${guildId})`);
             return;
         }
 
@@ -379,9 +383,12 @@ export class Api {
                 return;
             }
 
+            if (role.position >= (botMember.roles.highest?.position || 0)) {
+                return;
+            }
+
             if (action === "add") {
                 if (member.roles.cache.has(roleId)) {
-                    // User already has the role - no need to log this
                     return;
                 }
 
@@ -390,11 +397,14 @@ export class Api {
                     await member.roles.add(roleId);
                     console.log(`[${new Date().toISOString()}] User ${member.user.tag} (${member.id}) linked their account and received the ${role.name} role`);
                 } catch (error) {
-                    console.error(`[${new Date().toISOString()}] Error adding role ${role.name} to ${member.user.tag}:`, error);
+                    if (error && typeof error === 'object' && 'code' in error && error.code === 50013) {
+                        console.error(`[${new Date().toISOString()}] Missing permissions to add role ${role.name} in guild ${guild.name}. Please ensure the bot has 'Manage Roles' permission and the role is below the bot's highest role.`);
+                    } else {
+                        console.error(`[${new Date().toISOString()}] Error adding role ${role.name} to ${member.user.tag}:`, error);
+                    }
                 }
             } else if (action === "remove") {
                 if (!member.roles.cache.has(roleId)) {
-                    // User doesn't have the role - no need to log this
                     return;
                 }
 
@@ -403,7 +413,11 @@ export class Api {
                     await member.roles.remove(roleId);
                     console.log(`[${new Date().toISOString()}] User ${member.user.tag} (${member.id}) unlinked their account and lost the ${role.name} role`);
                 } catch (error) {
-                    console.error(`[${new Date().toISOString()}] Error removing role ${role.name} from ${member.user.tag}:`, error);
+                    if (error && typeof error === 'object' && 'code' in error && error.code === 50013) {
+                        console.error(`[${new Date().toISOString()}] Missing permissions to remove role ${role.name} in guild ${guild.name}. Please ensure the bot has 'Manage Roles' permission and the role is below the bot's highest role.`);
+                    } else {
+                        console.error(`[${new Date().toISOString()}] Error removing role ${role.name} from ${member.user.tag}:`, error);
+                    }
                 }
             }
         } catch (error) {
@@ -996,6 +1010,12 @@ export class Api {
                 return;
             }
 
+            const botMember = guild.members.cache.get(client.user?.id || '');
+            if (!botMember?.permissions.has('ManageRoles')) {
+                console.error(`[${new Date().toISOString()}] Bot missing 'Manage Roles' permission in guild ${guild.name} (${guildId})`);
+                return;
+            }
+
             const member = guild.members.cache.get(userId) ?? await guild.members.fetch(userId).catch(() => null);
             if (!member) {
                 console.warn(`[${new Date().toISOString()}] Member ${userId} not found in guild ${guildId}`);
@@ -1008,8 +1028,11 @@ export class Api {
                 return;
             }
 
+            if (role.position >= (botMember.roles.highest?.position || 0)) {
+                return;
+            }
+
             if (member.roles.cache.has(roleId)) {
-                // User already has the role - no need to log this
                 return;
             }
 
@@ -1019,7 +1042,11 @@ export class Api {
             console.log(`[${new Date().toISOString()}] Assigned role ${role.name} to ${member.user.tag} in ${guild.name}`);
 
         } catch (error) {
-            console.error(`[${new Date().toISOString()}] Error assigning role ${roleId} to user ${user.id} in guild ${guildId}:`, error);
+            if (error && typeof error === 'object' && 'code' in error && error.code === 50013) {
+                console.error(`[${new Date().toISOString()}] Missing permissions to assign role ${roleId} in guild ${guildId}. Please ensure the bot has 'Manage Roles' permission and the role is below the bot's highest role.`);
+            } else {
+                console.error(`[${new Date().toISOString()}] Error assigning role ${roleId} to user ${user.id} in guild ${guildId}:`, error);
+            }
         }
     }
 
@@ -1030,7 +1057,6 @@ export class Api {
             return;
         }
         
-        // Only log when starting role removal process
         console.log(`[${new Date().toISOString()}] Starting role removal check for user ${userId}`);
         
         const trackedRolesMap = await Api.batchFetchRoles(Array.from(rolesToAssign.keys()));
@@ -1090,6 +1116,12 @@ export class Api {
                 return;
             }
 
+            const botMember = guild.members.cache.get(client.user?.id || '');
+            if (!botMember?.permissions.has('ManageRoles')) {
+                console.error(`[${new Date().toISOString()}] Bot missing 'Manage Roles' permission in guild ${guild.name} (${guildId})`);
+                return;
+            }
+
             const member = guild.members.cache.get(userId) ?? await guild.members.fetch(userId).catch(() => null);
             if (!member) {
                 console.warn(`[${new Date().toISOString()}] Member ${userId} not found in guild ${guildId}`);
@@ -1099,6 +1131,10 @@ export class Api {
             const role = guild.roles.cache.get(roleId);
             if (!role) {
                 console.warn(`[${new Date().toISOString()}] Role ${roleId} not found in guild ${guildId}`);
+                return;
+            }
+
+            if (role.position >= (botMember.roles.highest?.position || 0)) {
                 return;
             }
 
@@ -1112,7 +1148,11 @@ export class Api {
             console.log(`[${new Date().toISOString()}] Removed role ${role.name} from ${member.user.tag} in ${guild.name}`);
 
         } catch (error) {
-            console.error(`[${new Date().toISOString()}] Error removing role ${roleId} from user in guild ${guildId}:`, error);
+            if (error && typeof error === 'object' && 'code' in error && error.code === 50013) {
+                console.error(`[${new Date().toISOString()}] Missing permissions to remove role ${roleId} in guild ${guildId}. Please ensure the bot has 'Manage Roles' permission and the role is below the bot's highest role.`);
+            } else {
+                console.error(`[${new Date().toISOString()}] Error removing role ${roleId} from user in guild ${guildId}:`, error);
+            }
         }
     }
 }
