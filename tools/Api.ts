@@ -54,31 +54,34 @@ export class Api {
         }, duration);
     }
 
-    static sendRoleUpdate(transaction: Transaction): void {
+    static async syncRoleToWebsite(discordId: string, roleId: string, guildId: string, action: "add" | "remove"): Promise<void> {
         const headers: Headers = new Headers()
         headers.set('Content-Type', 'application/json');
-        headers.set('Accept', 'application/json');
         headers.set('x-api-key', config.API_KEY);
 
-        const request: RequestInfo = new Request(config.API_ENDPOINT +
-            CONSTANTS.UPDATE_USER_ROLES, {
+        const request: RequestInfo = new Request(config.API_ENDPOINT + '/discord/sync-roles', {
             method: 'POST',
             headers: headers,
-            body: JSON.stringify({ "roles": [transaction] })
+            body: JSON.stringify({
+                discordId,
+                roleId,
+                guildId,
+                action
+            })
         })
 
-        fetch(request)
-            .then(res => {
-                if (!res.ok) {
-                    console.error(`[${new Date().toISOString()}] Error sending role update to website:`, res);
-                    res.json().then(json => console.error(`[${new Date().toISOString()}] Response body:`, json));
-                } else {
-                    console.log(`[${new Date().toISOString()}] Successfully sent role update to website`);
-                }
-            })
-            .catch(error => {
-                console.error(`[${new Date().toISOString()}] Error in sendRoleUpdate: ${error}`);
-            });
+        try {
+            const res = await fetch(request);
+            if (!res.ok) {
+                console.error(`[${new Date().toISOString()}] Error syncing role to website:`, res.status);
+                const json = await res.json().catch(() => ({}));
+                console.error(`[${new Date().toISOString()}] Response body:`, json);
+            } else {
+                console.log(`[${new Date().toISOString()}] Successfully synced role ${action} to website`);
+            }
+        } catch (error) {
+            console.error(`[${new Date().toISOString()}] Error in syncRoleToWebsite: ${error}`);
+        }
     }
 
     static sendGuildUpdate(id: string, name: string, added: boolean) {
@@ -520,22 +523,7 @@ export class Api {
     }
 
     static async fetchAndUpdateGuilds(client: Client) {
-        const url = new URL(config.API_ENDPOINT + CONSTANTS.GUILDS);
-        const request: RequestInfo = new Request(url, {
-            method: 'GET',
-            headers: new Headers({ 'x-api-key': config.API_KEY }),
-        });
-        const res = await fetch(request);
-        if (!res.ok) {
-            console.error("Failed to fetch guilds:\n", res);
-            res.json().then(json => console.error("body: ", json)).catch(err => console.error("Error reading response:", err));
-            return;
-        }
-        const json: { id: string, name: string; }[] = await res.json();
-        const added = client.guilds.cache.filter(guild => !json.includes({ id: guild.id, name: guild.name }));
-        const removed = json.filter((guild) => !client.guilds.cache.has(guild.id));
-        added.forEach((guild: Guild) => this.sendGuildUpdate(guild.id, guild.name, true));
-        removed.forEach((guild) => this.sendGuildUpdate(guild.id, guild.name, false));
+        console.log(`[${new Date().toISOString()}] Guild sync disabled - website manages guild settings`);
     }
 
     static async fetchLinkedUsers(): Promise<string[]> {

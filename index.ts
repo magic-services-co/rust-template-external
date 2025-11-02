@@ -48,91 +48,9 @@ async function start() {
 
     client.once("ready", async () => {
         console.log(">> Bot started");
-        await Api.fetchAndUpdateGuilds(client);
-        
-        // Initial role assignment based on user data structure
-        await Api.fetchAndAssignUserRoles(client);
-        
-        setInterval(async () => {
-            try {
-                if (isRateLimited('sync')) {
-                    console.log(`[${new Date().toISOString()}] Rate limit reached, skipping sync cycle`);
-                    return;
-                }
-
-                const linkedMembers = await Api.fetchLinkedUsers();
-                
-                for (const guildId of config.GUILD_IDS) {
-                    const guild = client.guilds.cache.get(guildId);
-                    if (!guild) continue;
-
-                    try {
-                        const rolesMap = await Api.batchFetchRoles([guildId]);
-                        const rolesToTrack = rolesMap.get(guildId) || [];
-                        
-                        const members = await guild.members.fetch();
-                        const memberIds = Array.from(members.keys());
-                        
-                        const memberRolesMap = await Api.batchFetchUsersRoles(memberIds, guildId, client);
-                        
-                        for (const [memberId, member] of members) {
-                            try {
-                                if (!member.roles || !member.roles.cache) continue;
-
-                                const membersRoles = memberRolesMap.get(memberId) || [];
-                                const isLinked = linkedMembers.includes(memberId);
-                                
-                                if (!isLinked) {
-                                    for (const roleId of rolesToTrack) {
-                                        if (!roleId || typeof roleId !== 'string') continue;
-                                        const role = guild.roles.cache.get(roleId);
-                                        if (!role) continue;
-                                        if (member.roles.cache.has(roleId)) {
-                                            console.log(`[${new Date().toISOString()}] Removing role ${role.name} from unlinked user ${member.user.tag}`);
-                                            await Api.handleInstantRoleUpdate(client, member.id, roleId, guildId, "remove");
-                                        }
-                                    }
-                                } else {
-                                    for (const roleId of membersRoles) {
-                                        if (!member.roles.cache.has(roleId)) {
-                                            const role = guild.roles.cache.get(roleId);
-                                            if (role) {
-                                                console.log(`[${new Date().toISOString()}] Adding missing role ${role.name} to linked user ${member.user.tag}`);
-                                                await Api.handleInstantRoleUpdate(client, member.id, roleId, guildId, "add");
-                                            }
-                                        }
-                                    }
-                                }
-                            } catch (error) {
-                                console.error(`[${new Date().toISOString()}] Error processing member ${memberId}:`, error);
-                            }
-                        }
-                    } catch (error) {
-                        console.error(`[${new Date().toISOString()}] Error processing guild ${guildId}:`, error);
-                    }
-                }
-            } catch (error) {
-                console.error(`[${new Date().toISOString()}] Error in periodic role sync:`, error);
-            }
-        }, 30000);
 
         setInterval(async () => {
-            try {
-                if (isRateLimited('user_roles')) {
-                    console.log(`[${new Date().toISOString()}] Rate limit reached, skipping user role assignment cycle`);
-                    return;
-                }
-                await Api.fetchAndAssignUserRoles(client);
-            } catch (error) {
-                console.error(`[${new Date().toISOString()}] Error in periodic user role assignment:`, error);
-            }
-        }, 60000); // Run every minute
-
-        setInterval(async () => {
-            const lastFetch = storage.get<string, string>("lastFetch", new Date().toISOString());
-            await Api.fetchAndApplyUpdates(client, lastFetch);
-            await Api.fetchAndPostMaps(client, lastFetch);
-            storage.set("lastFetch", new Date().toISOString());
+            await Api.fetchAndPostMaps(client, new Date(Date.now() - 60000).toISOString());
             let activityType = ActivityType.Custom;
             switch (config.ACTIVITY_TYPE) {
                 case "Competing":
