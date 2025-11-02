@@ -18,7 +18,6 @@ export class SyncUsersRoles {
         try {
             console.log(`[${new Date().toISOString()}] Manual role sync triggered by ${interaction.user.tag}`);
             
-            // Fetch and assign roles based on user data structure
             await Api.fetchAndAssignUserRoles(interaction.client as any);
             
             await interaction.editReply("✅ User roles have been synchronized successfully!");

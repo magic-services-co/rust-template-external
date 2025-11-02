@@ -49,8 +49,33 @@ async function start() {
     client.once("ready", async () => {
         console.log(">> Bot started");
 
+        const lastFetch = storage.get('lastFetch') as string | undefined;
+        
+        if (!lastFetch) {
+            console.log(`[${new Date().toISOString()}] No lastFetch found - performing initial sync`);
+        } else {
+            const lastFetchTime = new Date(lastFetch).getTime();
+            const hoursOffline = (Date.now() - lastFetchTime) / (1000 * 60 * 60);
+            const minutesOffline = (Date.now() - lastFetchTime) / (1000 * 60);
+            console.log(`[${new Date().toISOString()}] Bot was offline for ${minutesOffline.toFixed(1)} minutes (${hoursOffline.toFixed(2)} hours) - performing full sync`);
+        }
+
+        try {
+            await Api.fetchAndAssignUserRoles(client);
+            console.log(`[${new Date().toISOString()}] Full sync after startup completed`);
+        } catch (error) {
+            console.error(`[${new Date().toISOString()}] Error during full sync after startup:`, error);
+        }
+
+        storage.set('lastFetch', new Date().toISOString());
+
         setInterval(async () => {
             await Api.fetchAndPostMaps(client, new Date(Date.now() - 60000).toISOString());
+            
+            const currentLastFetch = storage.get('lastFetch') as string || new Date(Date.now() - 60000).toISOString();
+            await Api.fetchAndApplyUpdates(client, currentLastFetch);
+            storage.set('lastFetch', new Date().toISOString());
+            
             let activityType = ActivityType.Custom;
             switch (config.ACTIVITY_TYPE) {
                 case "Competing":

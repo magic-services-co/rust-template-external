@@ -14,14 +14,12 @@ class RoleTracking {
             return;
         }
 
-        const changed = oldMember.roles.cache.size != newMember.roles.cache.size;
-
-        if (!changed) {
-            return;
-        }
-
         const addedRoles = newMember.roles.cache.filter(role => !oldMember.roles.cache.has(role.id));
         const removedRoles = oldMember.roles.cache.filter(role => !newMember.roles.cache.has(role.id));
+
+        if (addedRoles.size === 0 && removedRoles.size === 0) {
+            return;
+        }
 
         const rolesToTrack = await Api.fetchRoles(newMember.guild.id);
         if (rolesToTrack.length == 0) {

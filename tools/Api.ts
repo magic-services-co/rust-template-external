@@ -276,31 +276,61 @@ export class Api {
             method: 'GET',
             headers: new Headers({ 'x-api-key': config.API_KEY }),
         });
-        const res = await fetch(request);
-        if (!res.ok) {
-            return;
-        }
-        const json = await res.json();
-        const logs: Log[] = json.logs;
-        for (const log of logs) {
-            if (log.action == "ROLE_ASSIGNED" || log.action == "ROLE_REVOKED" || log.action == "USER_UPDATED") {
-                if (log.discordRoleId) {
+        
+        try {
+            const res = await fetch(request);
+            if (!res.ok) {
+                console.error(`[${new Date().toISOString()}] Error fetching logs: ${res.status} ${res.statusText}`);
+                return;
+            }
+            const json = await res.json();
+            const logs: Log[] = json.logs || [];
+            
+            for (const log of logs) {
+                if (log.action == "ROLE_ASSIGNED" || log.action == "ROLE_REVOKED") {
+                    if (log.discordRoleId) {
+                        await this.applyRoleUpdate(client, log);
+                    } else {
+                        console.warn(`[${new Date().toISOString()}] Log ${log.action} missing discordRoleId`);
+                    }
+                } else if (log.action == "USER_UPDATED") {
                     await this.applyRoleUpdate(client, log);
                 }
             }
-        }
-        if (logs.length > 0) {
-            console.log(`[${new Date().toISOString()}] Processed ${logs.length} update(s) from API`);
+            if (logs.length > 0) {
+                console.log(`[${new Date().toISOString()}] Processed ${logs.length} update(s) from API`);
+            }
+        } catch (error) {
+            console.error(`[${new Date().toISOString()}] Error in fetchAndApplyUpdates:`, error);
         }
     }
 
     static async applyRoleUpdate(client: Client, log: Log) {
+        if (log.action == "USER_UPDATED") {
+            try {
+                const userData = await this.fetchUserWithRoles(log.discordId);
+                if (userData) {
+                    await this.assignUserRoles(client, userData);
+                } else {
+                    console.warn(`[${new Date().toISOString()}] No user data found for ${log.discordId} - user may have been deleted`);
+                }
+            } catch (error) {
+                console.error(`[${new Date().toISOString()}] Error re-syncing roles for user ${log.discordId} after USER_UPDATED:`, error);
+            }
+            return;
+        }
+
+        if (!log.discordGuildId) {
+            console.warn(`[${new Date().toISOString()}] Log action ${log.action} missing discordGuildId`);
+            return;
+        }
+
         const guild = client.guilds.cache.get(log.discordGuildId);
         if (!guild) {
             console.error("Guild " + log.discordGuildId + " not found!");
             return;
         }
-        if (guild.roles.premiumSubscriberRole?.id == log.discordRoleId) {
+        if (log.discordRoleId && guild.roles.premiumSubscriberRole?.id == log.discordRoleId) {
             return;
         }
         
@@ -321,7 +351,7 @@ export class Api {
                 return;
             }
 
-            if (log.action == "ROLE_ASSIGNED") {
+            if (log.action == "ROLE_ASSIGNED" && log.discordRoleId) {
                 try {
                     Api.setIgnoreRoleChange(3000);
                     await member.roles.add(log.discordRoleId);
@@ -329,22 +359,13 @@ export class Api {
                 } catch (error) {
                     console.error(`Error adding role to member ${member.displayName} (${log.discordId}), role: ${log.discordRoleId}, error: ${error}`);
                 }
-            } else if (log.action == "ROLE_REVOKED") {
+            } else if (log.action == "ROLE_REVOKED" && log.discordRoleId) {
                 try {
                     Api.setIgnoreRoleChange(3000);
                     await member.roles.remove(log.discordRoleId);
                     console.log(`[${new Date().toISOString()}] Role "${log.discordRoleId}" revoked from ${member.displayName} in ${guild.name} via API`);
                 } catch (error) {
                     console.error(`Error revoking role from member ${member.displayName} (${log.discordId}), role: ${log.discordRoleId}, error: ${error}`);
-                }
-            } else if (log.action == "USER_UPDATED" && config.SET_DISCORD_NAME_TO_STEAM_NAME) {
-                try {
-                    if (member.nickname !== log.name) {
-                        console.log(`[${new Date().toISOString()}] Updating nickname from "${member.nickname}" to "${log.name}" for ${member.displayName} in ${guild.name}`);
-                        await member.setNickname(log.name);
-                    }
-                } catch (error) {
-                    console.error(`Error updating nickname for member ${member.displayName} (${log.discordId}), error: ${error}`);
                 }
             }
         } catch (error) {
@@ -516,7 +537,6 @@ export class Api {
                 }
             }
         }
-        // Only log when there are actual map votes to process
         if (votes.length > 0) {
             console.log(`[${new Date().toISOString()}] Processed ${votes.length} map vote(s) from API`);
         }
@@ -608,12 +628,10 @@ export class Api {
         const rolesMap = new Map<string, string[]>();
         const uncachedGuilds: string[] = [];
 
-        // Only log if we need to fetch from API
         if (guildIds.length > 0) {
             const cacheKey = `roles_${guildIds[0]}`;
             const cachedRoles = Cache.get(cacheKey);
             if (cachedRoles) {
-                // All guilds are cached, return early
                 for (const guildId of guildIds) {
                     const guildCacheKey = `roles_${guildId}`;
                     const guildCachedRoles = Cache.get(guildCacheKey);
@@ -639,7 +657,6 @@ export class Api {
             const url = new URL(config.API_ENDPOINT + CONSTANTS.FETCH_ROLES);
             url.searchParams.set('guildIds', uncachedGuilds.join(','));
             
-            // Only log when actually fetching from API
             if (uncachedGuilds.length > 0) {
                 console.log(`[${new Date().toISOString()}] Fetching roles from API for ${uncachedGuilds.length} guild(s)`);
             }
@@ -712,7 +729,6 @@ export class Api {
             try {
                 const url = new URL(config.API_ENDPOINT + CONSTANTS.FETCH_USERS_ROLES);
                 const body = { ids: batch, guildId };
-                // Only log when actually fetching from API, not for every batch
                 if (i === 0) {
                     console.log(`[${new Date().toISOString()}] Fetching user roles for ${uncachedUsers.length} users in guild ${guildId}`);
                 }
@@ -786,7 +802,6 @@ export class Api {
                         if (toAdd.length > 0) {
                             Api.setIgnoreRoleChange(3000);
                             await member.roles.add(toAdd).catch(() => null);
-                            // Only log when actually assigning roles, not for every user
                             if (toAdd.length > 0) {
                                 console.log(`[${new Date().toISOString()}] Assigned ${toAdd.length} role(s) to ${member.user.tag} in ${guild.name}`);
                             }
@@ -803,7 +818,6 @@ export class Api {
 
     static async fetchAndAssignUserRoles(client: Client): Promise<void> {
         try {
-            // Start user role assignment process
             const linkedUsers = await Api.fetchLinkedUsers();
             console.log(`[${new Date().toISOString()}] Processing ${linkedUsers.length} linked users for role assignment`);
 
@@ -936,21 +950,111 @@ export class Api {
     }
 
     static async assignUserRoles(client: Client, user: UserData): Promise<void> {
-        if (!user.roles || !Array.isArray(user.roles)) {
-            return;
+        const allGuildIds = new Set<string>();
+        
+        for (const guildId of config.GUILD_IDS) {
+            allGuildIds.add(guildId);
+        }
+        
+        if (user.roles && Array.isArray(user.roles)) {
+            for (const role of user.roles) {
+                if (role.discordGuildIds) {
+                    for (const guildIds of role.discordGuildIds) {
+                        for (const guildId of guildIds) {
+                            if (guildId) allGuildIds.add(guildId);
+                        }
+                    }
+                }
+            }
         }
 
         const rolesToAssign = new Map<string, Set<string>>(); 
 
-        for (const role of user.roles) {
+        if (user.roles && Array.isArray(user.roles)) {
+            for (const role of user.roles) {
+                try {
+                    await this.processRoleAssignment(client, user, role, rolesToAssign);
+                } catch (error) {
+                    console.error(`[${new Date().toISOString()}] Error processing role ${role.name} for user ${user.id}:`, error);
+                }
+            }
+        }
+
+        for (const guildId of allGuildIds) {
             try {
-                await this.processRoleAssignment(client, user, role, rolesToAssign);
+                await this.handleSpecialRoles(client, user, guildId, rolesToAssign);
             } catch (error) {
-                console.error(`[${new Date().toISOString()}] Error processing role ${role.name} for user ${user.id}:`, error);
+                console.error(`[${new Date().toISOString()}] Error handling special roles for user ${user.id} in guild ${guildId}:`, error);
+            }
+        }
+
+        for (const guildId of allGuildIds) {
+            if (!rolesToAssign.has(guildId)) {
+                rolesToAssign.set(guildId, new Set());
             }
         }
 
         await this.handleRoleRemoval(client, user, rolesToAssign);
+    }
+
+    static async handleSpecialRoles(client: Client, user: UserData, guildId: string, rolesToAssign: Map<string, Set<string>>): Promise<void> {
+        try {
+            const rolesUrl = new URL(config.API_ENDPOINT + CONSTANTS.FETCH_ROLES);
+            rolesUrl.searchParams.set('guildId', guildId);
+            const rolesRequest = new Request(rolesUrl, {
+                method: 'GET',
+                headers: new Headers({ 'x-api-key': config.API_KEY }),
+            });
+
+            const rolesRes = await fetch(rolesRequest);
+            if (!rolesRes.ok) {
+                console.warn(`[${new Date().toISOString()}] Failed to fetch roles for guild ${guildId}`);
+                return;
+            }
+
+            const rolesJson = await rolesRes.json();
+            let roles: any[] = [];
+            if (Array.isArray(rolesJson)) {
+                roles = rolesJson;
+            } else if (rolesJson && rolesJson.roles && Array.isArray(rolesJson.roles)) {
+                roles = rolesJson.roles;
+            }
+
+            const linkedRole = roles.find(role => role.assignOnVerification);
+            if (linkedRole && linkedRole.discordRoleId) {
+                if (user.isLinked) {
+                    await this.assignRoleToUser(client, user, linkedRole.discordRoleId, guildId);
+                    if (!rolesToAssign.has(guildId)) {
+                        rolesToAssign.set(guildId, new Set());
+                    }
+                    rolesToAssign.get(guildId)!.add(linkedRole.discordRoleId);
+                }
+            }
+
+            const steamGroupRole = roles.find(role => role.assignOnGroupJoin);
+            if (steamGroupRole && steamGroupRole.discordRoleId) {
+                if (user.joinedSteamGroup) {
+                    await this.assignRoleToUser(client, user, steamGroupRole.discordRoleId, guildId);
+                    if (!rolesToAssign.has(guildId)) {
+                        rolesToAssign.set(guildId, new Set());
+                    }
+                    rolesToAssign.get(guildId)!.add(steamGroupRole.discordRoleId);
+                }
+            }
+
+            const boosterRole = roles.find(role => role.assignOnBoost);
+            if (boosterRole && boosterRole.discordRoleId) {
+                if (user.isBoosting) {
+                    await this.assignRoleToUser(client, user, boosterRole.discordRoleId, guildId);
+                    if (!rolesToAssign.has(guildId)) {
+                        rolesToAssign.set(guildId, new Set());
+                    }
+                    rolesToAssign.get(guildId)!.add(boosterRole.discordRoleId);
+                }
+            }
+        } catch (error) {
+            console.error(`[${new Date().toISOString()}] Error in handleSpecialRoles:`, error);
+        }
     }
 
     static async processRoleAssignment(client: Client, user: UserData, role: UserRole, rolesToAssign?: Map<string, Set<string>>): Promise<void> {
@@ -1045,8 +1149,6 @@ export class Api {
             return;
         }
         
-        console.log(`[${new Date().toISOString()}] Starting role removal check for user ${userId}`);
-        
         const trackedRolesMap = await Api.batchFetchRoles(Array.from(rolesToAssign.keys()));
         
         for (const [guildId, assignedRoles] of rolesToAssign) {
@@ -1065,22 +1167,13 @@ export class Api {
 
                 const trackedRoles = trackedRolesMap.get(guildId) || [];
                 
-                // Only log essential role checking info
-                console.log(`[${new Date().toISOString()}] Checking roles for ${member.user.tag} in ${guild.name}`);
-                
                 for (const roleId of trackedRoles) {
                     if (member.roles.cache.has(roleId)) {
                         if (!assignedRoles.has(roleId)) {
-                            // Only log when about to remove a role
-                            console.log(`[${new Date().toISOString()}] About to remove role ${roleId} from ${member.user.tag}`);
                             await this.removeRoleFromUser(client, user, roleId, guildId);
                             const role = guild.roles.cache.get(roleId);
                             console.log(`[${new Date().toISOString()}] Removed role ${role?.name || roleId} from ${member.user.tag} in ${guild.name} - not in website roles`);
-                        } else {
-                            // User correctly has the role - no need to log this
                         }
-                    } else {
-                        // User doesn't have tracked role - no need to log this
                     }
                 }
             } catch (error) {
