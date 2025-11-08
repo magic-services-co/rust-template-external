@@ -39,6 +39,51 @@ class RoleTracking {
         }
     }
 
+    @On({ event: "guildMemberAdd" })
+    async onMemberJoin(
+        [member]: ArgsOf<"guildMemberAdd">,
+        client: Client,
+        _guardPayload: any
+    ) {
+        try {
+            const rolesToAssign = await Api.fetchUsersRoles(member.id, member.guild.id);
+            if (rolesToAssign.length === 0) {
+                return;
+            }
+
+            const botMember = member.guild.members.cache.get(client.user?.id || '') ??
+                await member.guild.members.fetch(client.user?.id || '').catch(() => null);
+            if (!botMember?.permissions.has('ManageRoles')) {
+                console.warn(`[${new Date().toISOString()}] Bot missing 'Manage Roles' permission in guild ${member.guild.name} (${member.guild.id})`);
+                return;
+            }
+
+            const eligibleRoles = rolesToAssign.filter(roleId => {
+                const role = member.guild.roles.cache.get(roleId);
+                if (!role) {
+                    console.warn(`[${new Date().toISOString()}] Role ${roleId} not found in guild ${member.guild.name}`);
+                    return false;
+                }
+                if (role.position >= (botMember.roles.highest?.position || 0)) {
+                    console.warn(`[${new Date().toISOString()}] Skipping role ${role.name} (${role.id}) in guild ${member.guild.name} - above bot's highest role`);
+                    return false;
+                }
+                return true;
+            });
+
+            const missingRoles = eligibleRoles.filter(roleId => !member.roles.cache.has(roleId));
+            if (missingRoles.length === 0) {
+                return;
+            }
+
+            Api.setIgnoreRoleChange(3000);
+            await member.roles.add(missingRoles);
+            console.log(`[${new Date().toISOString()}] Assigned ${missingRoles.length} role(s) to ${member.user.tag} in ${member.guild.name} on join`);
+        } catch (error) {
+            console.error(`[${new Date().toISOString()}] Error assigning roles to ${member.user.tag} (${member.id}) on join:`, error);
+        }
+    }
+
     @On({ event: "ready" })
     async onReady(client: Client) {
         console.log("Bot is ready");
