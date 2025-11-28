@@ -903,6 +903,17 @@ namespace Oxide.Plugins
             public List<Log> Logs { get; set; }
         }
         
+        public class SyncRolesResponse
+        {
+            public List<SyncRoleItem> Roles { get; set; }
+        }
+        
+        public class SyncRoleItem
+        {
+            public List<string> OxideGroupNames { get; set; }
+            public List<string> ServerIds { get; set; }
+        }
+        
         public class RoleChange
         {
             public string Action { get; set; }
@@ -913,6 +924,17 @@ namespace Oxide.Plugins
         public class RoleData
         {
             public List<string> Roles { get; set; }
+        }
+        
+        public class TrackedRole
+        {
+            public string Id { get; set; }
+            public string Name { get; set; }
+            public List<string> DiscordRoleIds { get; set; }
+            public List<string> DiscordGuildIds { get; set; }
+            public List<string> ServerIds { get; set; }
+            public List<string> OxideGroupNames { get; set; }
+            public bool AssignOnVerification { get; set; }
         }
         
         public class RoleUpdate
@@ -956,7 +978,10 @@ namespace Oxide.Plugins
         
         private void GetTrackedRoles()
         {
-            var url = $"{_config.ApiEndpoint}/admin/roles?serverId={_config.ServerId}";
+            var isGlobal = string.IsNullOrWhiteSpace(_config.ServerId) || _config.ServerId.Equals("global", StringComparison.OrdinalIgnoreCase);
+            var url = isGlobal 
+                ? $"{_config.ApiEndpoint}/admin/roles" 
+                : $"{_config.ApiEndpoint}/admin/roles?serverId={_config.ServerId}";
             LogIt($"GetTrackedRoles requesting URL: {url}");
             
             webrequest.Enqueue(url, null,
@@ -990,19 +1015,48 @@ namespace Oxide.Plugins
                 
                 try
                 {
-                    var roleData = JsonConvert.DeserializeObject<RoleData>(response);
-                    _trackedRoles = roleData.Roles ?? new List<string>();
+                    var roles = JsonConvert.DeserializeObject<List<TrackedRole>>(response);
+                    _trackedRoles = new List<string>();
+                    
+                    if (roles != null)
+                    {
+                        foreach (var role in roles)
+                        {
+                            if (role.OxideGroupNames != null && role.OxideGroupNames.Count > 0)
+                            {
+                                foreach (var groupName in role.OxideGroupNames)
+                                {
+                                    if (!string.IsNullOrWhiteSpace(groupName) && !_trackedRoles.Contains(groupName))
+                                    {
+                                        _trackedRoles.Add(groupName);
+                                    }
+                                }
+                            }
+                            else if (!string.IsNullOrWhiteSpace(role.Name) && !_trackedRoles.Contains(role.Name))
+                            {
+                                _trackedRoles.Add(role.Name);
+                            }
+                        }
+                    }
                 }
                 catch (JsonSerializationException ex1)
                 {
                     try
                     {
-                        _trackedRoles = JsonConvert.DeserializeObject<List<string>>(response) ?? new List<string>();
+                        var roleData = JsonConvert.DeserializeObject<RoleData>(response);
+                        _trackedRoles = roleData?.Roles ?? new List<string>();
                     }
                     catch (JsonReaderException ex2)
                     {
-                        LogIt($"Failed to deserialize roles response. Response preview: '{responsePreview}'. Error1: {ex1.Message}. Error2: {ex2.Message}");
-                        _trackedRoles = new List<string>();
+                        try
+                        {
+                            _trackedRoles = JsonConvert.DeserializeObject<List<string>>(response) ?? new List<string>();
+                        }
+                        catch (Exception ex3)
+                        {
+                            LogIt($"Failed to deserialize roles response. Response preview: '{responsePreview}'. Error1: {ex1.Message}. Error2: {ex2.Message}. Error3: {ex3.Message}");
+                            _trackedRoles = new List<string>();
+                        }
                     }
                 }
                 catch (JsonReaderException ex)
@@ -1086,12 +1140,18 @@ namespace Oxide.Plugins
         {
             if (_inTransactionLog) return;
             
+            var isGlobal = string.IsNullOrWhiteSpace(_config.ServerId) || _config.ServerId.Equals("global", StringComparison.OrdinalIgnoreCase);
+            var serverId = isGlobal ? string.Empty : _config.ServerId;
+            var url = isGlobal 
+                ? $"{_config.ApiEndpoint}/user?type=oxide" 
+                : $"{_config.ApiEndpoint}/user?type=oxide&serverId={_config.ServerId}";
+            
             var logEntry = new Log
             {
                 Action = action.ToString().ToLower(),
                 SteamId = id,
                 OxideGroupNames = groupName,
-                ServerIds = _config.ServerId,
+                ServerIds = serverId,
                 DiscordGuildIds = "",
                 DiscordIds = "",
                 DiscordRoleIds = "",
@@ -1103,7 +1163,7 @@ namespace Oxide.Plugins
                 Logs = new List<Log> { logEntry }
             };
             
-            webrequest.Enqueue($"{_config.ApiEndpoint}/user?type=oxide&serverId={_config.ServerId}",
+            webrequest.Enqueue(url,
             JsonConvert.SerializeObject(logData, Formatting.None,
             new JsonSerializerSettings
             {
@@ -1125,8 +1185,11 @@ namespace Oxide.Plugins
         private IEnumerator SyncRoles(BasePlayer player)
         {
             var encodedPlayerId = Uri.EscapeDataString(player.UserIDString);
-            webrequest.Enqueue(
-            $"{_config.ApiEndpoint}/user?type=oxide&playerId={encodedPlayerId}&serverIds={_config.ServerId}",
+            var isGlobal = string.IsNullOrWhiteSpace(_config.ServerId) || _config.ServerId.Equals("global", StringComparison.OrdinalIgnoreCase);
+            var url = isGlobal 
+                ? $"{_config.ApiEndpoint}/user?type=oxide&playerId={encodedPlayerId}" 
+                : $"{_config.ApiEndpoint}/user?type=oxide&playerId={encodedPlayerId}&serverIds={_config.ServerId}";
+            webrequest.Enqueue(url,
             null,
             (code, response) =>
             {
@@ -1148,37 +1211,65 @@ namespace Oxide.Plugins
                 }
                 
                 List<string> roles = new List<string>();
+                var isGlobal = string.IsNullOrWhiteSpace(_config.ServerId) || _config.ServerId.Equals("global", StringComparison.OrdinalIgnoreCase);
                 try
                 {
-                    var logData = JsonConvert.DeserializeObject<LogData>(response);
-                    if (logData?.Logs != null)
+                    var syncRolesResponse = JsonConvert.DeserializeObject<SyncRolesResponse>(response);
+                    if (syncRolesResponse?.Roles != null)
                     {
-                        foreach (var log in logData.Logs)
+                        foreach (var roleItem in syncRolesResponse.Roles)
                         {
-                            if (!string.IsNullOrEmpty(log.OxideGroupNames))
+                            var appliesToServer = isGlobal;
+                            if (!appliesToServer && roleItem.ServerIds != null)
                             {
-                                var groupNames = log.OxideGroupNames.Split(',', StringSplitOptions.RemoveEmptyEntries);
-                                foreach (var groupName in groupNames)
+                                appliesToServer = roleItem.ServerIds.Contains(_config.ServerId) || 
+                                                  roleItem.ServerIds.Contains("global", StringComparer.OrdinalIgnoreCase);
+                            }
+                            
+                            if (appliesToServer && roleItem.OxideGroupNames != null)
+                            {
+                                foreach (var groupName in roleItem.OxideGroupNames)
                                 {
-                                    var trimmedGroupName = groupName.Trim();
-                                    if (!roles.Contains(trimmedGroupName))
-                                        roles.Add(trimmedGroupName);
+                                    if (!string.IsNullOrWhiteSpace(groupName) && !roles.Contains(groupName))
+                                    {
+                                        roles.Add(groupName);
+                                    }
                                 }
                             }
                         }
                     }
                     else
                     {
-                        var roleData = JsonConvert.DeserializeObject<RoleData>(response);
-                        if (roleData?.Roles != null)
-                            roles = roleData.Roles;
+                        var logData = JsonConvert.DeserializeObject<LogData>(response);
+                        if (logData?.Logs != null)
+                        {
+                            foreach (var log in logData.Logs)
+                            {
+                                if (!string.IsNullOrEmpty(log.OxideGroupNames))
+                                {
+                                    var groupNames = log.OxideGroupNames.Split(',', StringSplitOptions.RemoveEmptyEntries);
+                                    foreach (var groupName in groupNames)
+                                    {
+                                        var trimmedGroupName = groupName.Trim();
+                                        if (!roles.Contains(trimmedGroupName))
+                                            roles.Add(trimmedGroupName);
+                                    }
+                                }
+                            }
+                        }
+                        else
+                        {
+                            var roleData = JsonConvert.DeserializeObject<RoleData>(response);
+                            if (roleData?.Roles != null)
+                                roles = roleData.Roles;
+                        }
                     }
                 }
                 catch (JsonSerializationException ex1)
                 {
                     try
                     {
-                        roles = JsonConvert.DeserializeObject<List<string>>(response);
+                        roles = JsonConvert.DeserializeObject<List<string>>(response) ?? new List<string>();
                     }
                     catch (JsonReaderException ex2)
                     {
@@ -1269,12 +1360,18 @@ namespace Oxide.Plugins
         {
             if (_inTransactionLog) return;
             
+            var isGlobal = string.IsNullOrWhiteSpace(_config.ServerId) || _config.ServerId.Equals("global", StringComparison.OrdinalIgnoreCase);
+            var serverId = isGlobal ? string.Empty : _config.ServerId;
+            var url = isGlobal 
+                ? $"{_config.ApiEndpoint}/user?type=oxide" 
+                : $"{_config.ApiEndpoint}/user?type=oxide&serverId={_config.ServerId}";
+            
             var logEntry = new Log
             {
                 Action = action.ToString().ToLower(),
                 SteamId = id,
                 OxideGroupNames = groupName,
-                ServerIds = _config.ServerId,
+                ServerIds = serverId,
                 DiscordGuildIds = discordGuildIds,
                 DiscordIds = discordIds,
                 DiscordRoleIds = discordRoleIds,
@@ -1286,7 +1383,7 @@ namespace Oxide.Plugins
                 Logs = new List<Log> { logEntry }
             };
             
-            webrequest.Enqueue($"{_config.ApiEndpoint}/user?type=oxide&serverId={_config.ServerId}",
+            webrequest.Enqueue(url,
             JsonConvert.SerializeObject(logData, Formatting.None,
             new JsonSerializerSettings
             {
@@ -1366,38 +1463,64 @@ namespace Oxide.Plugins
         
         private void SendPlayerStats(List<PlayerStat> stats)
         {
-            var loginTime = DateTime.Now;
-            var body = JsonConvert.SerializeObject(stats, Formatting.None,
-            new JsonSerializerSettings {DefaultValueHandling = DefaultValueHandling.Ignore});
-            LogIt(body);
-            webrequest.Enqueue($"{_config.ApiEndpoint}/stats", body,
-            (code, response) =>
+            if (stats == null || stats.Count == 0)
             {
-                if (code != 200 || response == null)
+                LogIt("SendPlayerStats: No stats to send");
+                return;
+            }
+            
+            var loginTime = DateTime.Now;
+            try
+            {
+                var body = JsonConvert.SerializeObject(stats, Formatting.None,
+                new JsonSerializerSettings {DefaultValueHandling = DefaultValueHandling.Ignore});
+                LogIt(body);
+                webrequest.Enqueue($"{_config.ApiEndpoint}/stats", body,
+                (code, response) =>
                 {
-                    LogIt($"Request failed {code} || {response}");
-                    return;
-                }
-                LogIt("Stats Sent");
-                ResetPlayerStats(loginTime);
-            }, this, RequestMethod.POST, GetHeaders());
+                    if (code != 200 || response == null)
+                    {
+                        LogIt($"Request failed {code} || {response}");
+                        return;
+                    }
+                    LogIt("Stats Sent");
+                    ResetPlayerStats(loginTime);
+                }, this, RequestMethod.POST, GetHeaders());
+            }
+            catch (Exception ex)
+            {
+                LogIt($"Failed to serialize or send player stats: {ex.Message}");
+            }
         }
         
         private void SendSinglePlayerStats(List<PlayerStat> stats)
         {
-            var body = JsonConvert.SerializeObject(stats, Formatting.None,
-            new JsonSerializerSettings { DefaultValueHandling = DefaultValueHandling.Ignore });
-            LogIt(body);
-            webrequest.Enqueue($"{_config.ApiEndpoint}/stats", body,
-            (code, response) =>
+            if (stats == null || stats.Count == 0)
             {
-                if (code != 200 || response == null)
+                LogIt("SendSinglePlayerStats: No stats to send");
+                return;
+            }
+            
+            try
+            {
+                var body = JsonConvert.SerializeObject(stats, Formatting.None,
+                new JsonSerializerSettings { DefaultValueHandling = DefaultValueHandling.Ignore });
+                LogIt(body);
+                webrequest.Enqueue($"{_config.ApiEndpoint}/stats", body,
+                (code, response) =>
                 {
-                    LogIt($"Request failed {code} || {response}");
-                    return;
-                }
-                LogIt("Single Player Stats Sent");
-            }, this, RequestMethod.POST, GetHeaders());
+                    if (code != 200 || response == null)
+                    {
+                        LogIt($"Request failed {code} || {response}");
+                        return;
+                    }
+                    LogIt("Single Player Stats Sent");
+                }, this, RequestMethod.POST, GetHeaders());
+            }
+            catch (Exception ex)
+            {
+                LogIt($"Failed to serialize or send single player stats: {ex.Message}");
+            }
         }
         
         public class PlayerInfo
