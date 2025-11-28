@@ -14,7 +14,7 @@ using UnityEngine;
 //MagicCore created with PluginMerge v(1.0.8.0) by MJSU @ https://github.com/dassjosh/Plugin.Merge
 namespace Oxide.Plugins
 {
-    [Info("MagicCore", "Magic Services / Shady14u", "1.1.3")]
+    [Info("MagicCore", "Magic Services / Shady14u", "1.2.0")]
     [Description("Core Logic for the Leader Board and Linking System")]
     public partial class MagicCore : RustPlugin
     {
