@@ -60,11 +60,15 @@ async function start() {
             console.log(`[${new Date().toISOString()}] Bot was offline for ${minutesOffline.toFixed(1)} minutes (${hoursOffline.toFixed(2)} hours) - performing full sync`);
         }
 
-        try {
-            await Api.fetchAndAssignUserRoles(client);
-            console.log(`[${new Date().toISOString()}] Full sync after startup completed`);
-        } catch (error) {
-            console.error(`[${new Date().toISOString()}] Error during full sync after startup:`, error);
+        if (config.ROLE_SYNC_ENABLED) {
+            try {
+                await Api.fetchAndAssignUserRoles(client);
+                console.log(`[${new Date().toISOString()}] Full sync after startup completed`);
+            } catch (error) {
+                console.error(`[${new Date().toISOString()}] Error during full sync after startup:`, error);
+            }
+        } else {
+            console.log(`[${new Date().toISOString()}] Role sync is disabled - skipping startup sync`);
         }
 
         storage.set('lastFetch', new Date().toISOString());
@@ -72,9 +76,11 @@ async function start() {
         setInterval(async () => {
             await Api.fetchAndPostMaps(client, new Date(Date.now() - 60000).toISOString());
             
-            const currentLastFetch = storage.get('lastFetch') as string || new Date(Date.now() - 60000).toISOString();
-            await Api.fetchAndApplyUpdates(client, currentLastFetch);
-            storage.set('lastFetch', new Date().toISOString());
+            if (config.ROLE_SYNC_ENABLED) {
+                const currentLastFetch = storage.get('lastFetch') as string || new Date(Date.now() - 60000).toISOString();
+                await Api.fetchAndApplyUpdates(client, currentLastFetch);
+                storage.set('lastFetch', new Date().toISOString());
+            }
             
             let activityType = ActivityType.Custom;
             switch (config.ACTIVITY_TYPE) {

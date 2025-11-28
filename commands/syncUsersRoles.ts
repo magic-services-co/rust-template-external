@@ -15,6 +15,11 @@ export class SyncUsersRoles {
     async syncUsersRoles(interaction: CommandInteraction): Promise<void> {
         await interaction.deferReply();
 
+        if (!config.ROLE_SYNC_ENABLED) {
+            await interaction.editReply("❌ Role syncing is currently disabled in the configuration.");
+            return;
+        }
+
         try {
             console.log(`[${new Date().toISOString()}] Manual role sync triggered by ${interaction.user.tag}`);
             

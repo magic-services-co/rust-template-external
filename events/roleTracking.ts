@@ -10,7 +10,7 @@ class RoleTracking {
         client: Client,
         _guardPayload: any
     ) {
-        if (Api.ignoreRoleChange) {
+        if (!config.ROLE_SYNC_ENABLED || Api.ignoreRoleChange) {
             return;
         }
 
@@ -45,6 +45,10 @@ class RoleTracking {
         client: Client,
         _guardPayload: any
     ) {
+        if (!config.ROLE_SYNC_ENABLED) {
+            return;
+        }
+        
         try {
             const rolesToAssign = await Api.fetchUsersRoles(member.id, member.guild.id);
             if (rolesToAssign.length === 0) {
