@@ -14,7 +14,7 @@ using UnityEngine;
 //MagicCore created with PluginMerge v(1.0.8.0) by MJSU @ https://github.com/dassjosh/Plugin.Merge
 namespace Oxide.Plugins
 {
-    [Info("MagicCore", "Magic Services / Shady14u", "1.2.0")]
+    [Info("MagicCore", "Magic Services / Shady14u", "1.2.2")]
     [Description("Core Logic for the Leader Board and Linking System")]
     public partial class MagicCore : RustPlugin
     {
@@ -261,6 +261,17 @@ namespace Oxide.Plugins
             }
             
             CleanupBanCache();
+        }
+        
+        private void SyncAllConnectedPlayersRoles()
+        {
+            var connectedPlayers = BasePlayer.activePlayerList.ToList();
+            LogIt($"Performing periodic role sync for {connectedPlayers.Count} connected players");
+            
+            foreach (var player in connectedPlayers)
+            {
+                ServerMgr.Instance.StartCoroutine(SyncRoles(player));
+            }
         }
         
         private void CleanupBanCache()
@@ -679,6 +690,7 @@ namespace Oxide.Plugins
             _timers.Add(timer.Every(_config.UpdateCheckFrequency * 120, GetTrackedRoles));
             _timers.Add(timer.Every(_config.UpdateCheckFrequency * 60, SavePlayerStats));
             _timers.Add(timer.Every(_config.UpdateCheckFrequency * 60, GetTransactionLog));
+            _timers.Add(timer.Every(_config.UpdateCheckFrequency * 60, SyncAllConnectedPlayersRoles));
             
             if (_config.BanSystemEnabled)
             {
