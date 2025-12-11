@@ -345,19 +345,7 @@ namespace Oxide.Plugins
                     RoleCommonNames = new Dictionary<string, string>
                     {
                         {"admin", "Admin"},
-                        {"authenticated", "Linked"},
-                        {"vip3", "VIP"},
-                        {"vip2", "VIP +"},
-                        {"vip1", "MVP"},
-                        {"discord-booster", "Booster"},
-                        {"warlord", "Warlord"},
-                        {"assassin", "Assassin"},
-                        {"builder", "Builder"},
-                        {"demolition", "Demolition"},
-                        {"raider", "Raider"},
-                        {"general", "General"},
-                        {"linked", "Linked"},
-                        {"commando", "Commando"}
+                        {"linked", "Linked"}
                     }
                 };
             }
