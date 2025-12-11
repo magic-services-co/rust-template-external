@@ -14,7 +14,7 @@ using UnityEngine;
 //MagicCore created with PluginMerge v(1.0.8.0) by MJSU @ https://github.com/dassjosh/Plugin.Merge
 namespace Oxide.Plugins
 {
-    [Info("MagicCore", "Magic Services / Shady14u", "1.2.2")]
+    [Info("MagicCore", "Magic Services / Shady14u", "1.2.3")]
     [Description("Core Logic for the Leader Board and Linking System")]
     public partial class MagicCore : RustPlugin
     {
@@ -1352,18 +1352,25 @@ namespace Oxide.Plugins
             
             if(rolesAdded.Count == 0 && rolesRemoved.Count == 0)
             {
-                player.ChatMessage(PluginMessages.NoChanges);
                 yield break;
             }
             
             var msg = "";
             if(rolesAdded.Count > 0)
             {
-                msg += PluginMessages.RolesAdded.Replace("{0}", string.Join(", ",rolesAdded));
+                foreach(var role in rolesAdded)
+                {
+                    if(!string.IsNullOrEmpty(msg)) msg += "\n";
+                    msg += $"RoleAdded: {role}";
+                }
             }
             if(rolesRemoved.Count > 0)
             {
-                msg += PluginMessages.RolesRemoved.Replace("{0}", string.Join(", ", rolesRemoved));
+                foreach(var role in rolesRemoved)
+                {
+                    if(!string.IsNullOrEmpty(msg)) msg += "\n";
+                    msg += $"RoleRemoved: {role}";
+                }
             }
             player.ChatMessage(msg);
         }
