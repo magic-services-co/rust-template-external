@@ -14,7 +14,7 @@ using UnityEngine;
 //MagicCore created with PluginMerge v(1.0.8.0) by MJSU @ https://github.com/dassjosh/Plugin.Merge
 namespace Oxide.Plugins
 {
-    [Info("MagicCore", "Magic Services / Shady14u && Vinni P.", "1.2.4")]
+    [Info("MagicCore", "Magic Services / Shady14u && Vinni P.", "1.3.0")]
     [Description("Core Logic for the Leader Board and Linking System")]
     public partial class MagicCore : RustPlugin
     {
@@ -713,10 +713,88 @@ namespace Oxide.Plugins
             }, this, RequestMethod.GET, GetHeaders());
         }
         
+        private void TriggerWipe(string wipeName = null)
+        {
+            if (_config == null)
+            {
+                LogIt("TriggerWipe: _config is null, cannot trigger wipe");
+                return;
+            }
+            
+            if (string.IsNullOrWhiteSpace(_config.ApiEndpoint))
+            {
+                LogIt("TriggerWipe: ApiEndpoint is null or empty, cannot trigger wipe");
+                return;
+            }
+            
+            if (string.IsNullOrWhiteSpace(_config.ServerId))
+            {
+                LogIt("TriggerWipe: ServerId is null or empty, cannot trigger wipe");
+                return;
+            }
+            
+            var defaultWipeName = $"Wipe {DateTime.Now:MM/dd/yyyy}";
+            var wipeRequest = new WipeRequest
+            {
+                ServerId = _config.ServerId,
+                Name = wipeName ?? defaultWipeName
+            };
+            
+            try
+            {
+                var jsonBody = JsonConvert.SerializeObject(wipeRequest, Formatting.None,
+                    new JsonSerializerSettings { DefaultValueHandling = DefaultValueHandling.Ignore });
+                
+                LogIt($"Triggering wipe: {jsonBody}");
+                
+                webrequest.Enqueue($"{_config.ApiEndpoint}/api/wipes", jsonBody,
+                (code, response) =>
+                {
+                    if (code == 200 && !string.IsNullOrEmpty(response))
+                    {
+                        try
+                        {
+                            var wipeResponse = JsonConvert.DeserializeObject<WipeResponse>(response);
+                            if (wipeResponse != null && wipeResponse.Success)
+                            {
+                                LogIt($"Wipe triggered successfully: {wipeResponse.Message}");
+                                if (wipeResponse.Wipe != null)
+                                {
+                                    LogIt($"New wipe ID: {wipeResponse.Wipe.Id}, Name: {wipeResponse.Wipe.Name}");
+                                }
+                            }
+                            else
+                            {
+                                LogIt($"Wipe trigger failed: {response}");
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            LogIt($"Error deserializing wipe response: {ex.Message}");
+                        }
+                    }
+                    else
+                    {
+                        LogIt($"Wipe trigger API error: {code} - {response}");
+                    }
+                }, this, RequestMethod.POST, GetHeaders());
+            }
+            catch (Exception ex)
+            {
+                LogIt($"Failed to trigger wipe: {ex.Message}");
+            }
+        }
+        
         private void OnServerSave()
         {
             SavePlayerStats();
             SaveData();
+        }
+        
+        void OnNewSave(string filename)
+        {
+            Puts("Wipe triggered!");
+            TriggerWipe();
         }
         
         void OnUserGroupAdded(string id, string groupName)
@@ -976,6 +1054,45 @@ namespace Oxide.Plugins
             public Dictionary<string, BanResponse> Results { get; set; }
             public int Checked { get; set; }
             public string Timestamp { get; set; }
+        }
+        
+        public class WipeRequest
+        {
+            [JsonProperty(PropertyName = "serverId")]
+            public string ServerId { get; set; }
+            
+            [JsonProperty(PropertyName = "name")]
+            public string Name { get; set; }
+        }
+        
+        public class WipeResponse
+        {
+            [JsonProperty(PropertyName = "success")]
+            public bool Success { get; set; }
+            
+            [JsonProperty(PropertyName = "wipe")]
+            public WipeData Wipe { get; set; }
+            
+            [JsonProperty(PropertyName = "message")]
+            public string Message { get; set; }
+        }
+        
+        public class WipeData
+        {
+            [JsonProperty(PropertyName = "id")]
+            public int Id { get; set; }
+            
+            [JsonProperty(PropertyName = "server_id")]
+            public string ServerId { get; set; }
+            
+            [JsonProperty(PropertyName = "name")]
+            public string Name { get; set; }
+            
+            [JsonProperty(PropertyName = "started_at")]
+            public string StartedAt { get; set; }
+            
+            [JsonProperty(PropertyName = "is_active")]
+            public bool IsActive { get; set; }
         }
         #endregion
 
