@@ -14,7 +14,7 @@ using UnityEngine;
 //MagicCore created with PluginMerge v(1.0.8.0) by MJSU @ https://github.com/dassjosh/Plugin.Merge
 namespace Oxide.Plugins
 {
-    [Info("MagicCore", "Magic Services / Shady14u", "1.2.3")]
+    [Info("MagicCore", "Magic Services / Shady14u && Vinni P.", "1.2.4")]
     [Description("Core Logic for the Leader Board and Linking System")]
     public partial class MagicCore : RustPlugin
     {
@@ -27,7 +27,14 @@ namespace Oxide.Plugins
         
         private Dictionary<string, string> GetHeaders()
         {
-            return new Dictionary<string, string> {{"x-api-key", $"{_config.MagicApiKey}"}};
+            if (_config == null)
+            {
+                LogIt("GetHeaders: _config is null");
+                return new Dictionary<string, string>();
+            }
+            
+            var apiKey = _config.MagicApiKey ?? string.Empty;
+            return new Dictionary<string, string> {{"x-api-key", apiKey}};
         }
         
         private PlayerStat GetPlayerStats(ulong playerId)
@@ -43,7 +50,7 @@ namespace Oxide.Plugins
         
         private void LogIt(string message)
         {
-            if(_config.Debug)
+            if(_config != null && _config.Debug)
             PrintWarning($"{DateTime.Now}: {message}");
         }
         
@@ -1476,6 +1483,18 @@ namespace Oxide.Plugins
                 return;
             }
             
+            if (_config == null)
+            {
+                LogIt("SendPlayerStats: _config is null, cannot send stats");
+                return;
+            }
+            
+            if (string.IsNullOrWhiteSpace(_config.ApiEndpoint))
+            {
+                LogIt("SendPlayerStats: ApiEndpoint is null or empty, cannot send stats");
+                return;
+            }
+            
             var loginTime = DateTime.Now;
             try
             {
@@ -1505,6 +1524,18 @@ namespace Oxide.Plugins
             if (stats == null || stats.Count == 0)
             {
                 LogIt("SendSinglePlayerStats: No stats to send");
+                return;
+            }
+            
+            if (_config == null)
+            {
+                LogIt("SendSinglePlayerStats: _config is null, cannot send stats");
+                return;
+            }
+            
+            if (string.IsNullOrWhiteSpace(_config.ApiEndpoint))
+            {
+                LogIt("SendSinglePlayerStats: ApiEndpoint is null or empty, cannot send stats");
                 return;
             }
             
