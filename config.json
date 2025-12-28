@@ -1,20 +1,28 @@
 {
-  "BOT_TOKEN": "STEP DISC.1.",
-  "CLIENT_ID": "STEP DISC.2.",
-  "GUILD_IDS": [ "" ],
-  "VIEW_MEMBERS_ROLES": [""],
-  "SYNC_USERS_PERMS": ["Administrator"],
+  "CLIENT_ID": "",
+  "BOT_TOKEN": "",
+  "GUILD_IDS": [ "RoleID", "RoleID2"],
+  "VIEW_MEMBERS_ROLES": ["RoleID"],
+  "SYNC_USERS_PERMS": ["-- | Backend Developer |"],
   "MAP_VOTES_CHANNELS": [
     {
       "guild": "",
       "channel": ""
     }
   ],
+  "ROLE_SYNC_ENABLED": false,
   "API_KEY": "",
-  "UPDATE_CHECK_FREQUENCY (MINUTES)": 5,
+  "UPDATE_CHECK_FREQUENCY (MINUTES)": 1,
   "SET_DISCORD_NAME_TO_STEAM_NAME": false,
   "EMBED_HEX": "0099FF",
-  "ACTIVITY_TYPE": "CUSTOM",
+  "ACTIVITY_TYPE": "Custom",
   "STATUS_TEXT": "{USERS_AMOUNT} users linked!",
-  "API_ENDPOINT": "https://magicservices.co/api"
+  "API_ENDPOINT": "http://localhost:3000/api",
+  "TICKET_SUPPORT_ROLE_IDS": ["roleId1", "roleId2"],
+  "TICKET_CATEGORY_ACCESS_ROLES": { 
+    "<categorySlug>": ["roleId1", "roleId2"] 
+  },
+  "TICKET_CATEGORY_PING_ROLES": { 
+    "<categorySlug>": ["roleIdA", "roleIdB"] 
+  }
 }
