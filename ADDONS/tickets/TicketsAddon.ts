@@ -45,6 +45,7 @@ import config from "../../config.json";
 import { TicketApi, type SupportCategory, type SupportField } from "./TicketApi.ts";
 import { TicketRegistry } from "./TicketRegistry.ts";
 import { randomUUID } from "crypto";
+import { supportClient } from "../../index.ts";
 
 interface PanelSession {
     id: string;
@@ -83,6 +84,22 @@ const CATEGORY_PING_ROLES: Record<string, string[]> =
     typeof (config as any).TICKET_CATEGORY_PING_ROLES === "object"
         ? (config as any).TICKET_CATEGORY_PING_ROLES
         : {};
+const TICKET_PANEL_TYPE: "dropdown" | "buttons" =
+    (config as any).TICKET_PANEL_TYPE === "buttons" ? "buttons" : "dropdown";
+const SUPPORT_BOT_TOKEN: string | null =
+    (config as any).SUPPORT_BOT_TOKEN && typeof (config as any).SUPPORT_BOT_TOKEN === "string" && (config as any).SUPPORT_BOT_TOKEN.trim().length > 0
+        ? (config as any).SUPPORT_BOT_TOKEN.trim()
+        : null;
+const TICKET_MODE: "dm" | "channel" =
+    (config as any).TICKET_MODE === "dm" ? "dm" : "channel";
+const TICKET_DM_GUILD_ID: string | null =
+    (config as any).TICKET_DM_GUILD_ID && typeof (config as any).TICKET_DM_GUILD_ID === "string" && (config as any).TICKET_DM_GUILD_ID.trim().length > 0
+        ? (config as any).TICKET_DM_GUILD_ID.trim()
+        : null;
+const TICKET_DM_CHANNEL_CATEGORY_ID: string | null =
+    (config as any).TICKET_DM_CHANNEL_CATEGORY_ID && typeof (config as any).TICKET_DM_CHANNEL_CATEGORY_ID === "string" && (config as any).TICKET_DM_CHANNEL_CATEGORY_ID.trim().length > 0
+        ? (config as any).TICKET_DM_CHANNEL_CATEGORY_ID.trim()
+        : null;
 const COOLDOWN_BYPASS_ROLE_ID = "1437906177550975026";
 
 interface FieldPrompt {
@@ -120,7 +137,7 @@ interface TicketFollowupSession {
 }
 
 interface TicketChannelCreationOptions {
-    interaction: StringSelectMenuInteraction | ModalSubmitInteraction;
+    interaction: StringSelectMenuInteraction | ModalSubmitInteraction | ButtonInteraction;
     category: SupportCategory;
     panelConfig: PanelConfig;
     answers: Record<string, string>;
@@ -345,31 +362,59 @@ function buildPanelEmbed(
     return embed;
 }
 
-function buildCategorySelect(categories: SupportCategory[], buttonLabel: string) {
-    const select = new StringSelectMenuBuilder()
-        .setCustomId("ticket:category-select")
-        .setPlaceholder("Select a ticket category")
-        .setMinValues(1)
-        .setMaxValues(1);
+function buildCategorySelect(
+    categories: SupportCategory[],
+    buttonLabel: string,
+    panelType: "dropdown" | "buttons" = TICKET_PANEL_TYPE,
+): 
+    | { buttonRows: ActionRowBuilder<MessageActionRowComponentBuilder>[]; reminderRow: ActionRowBuilder<MessageActionRowComponentBuilder> }
+    | { selectRow: ActionRowBuilder<MessageActionRowComponentBuilder>; buttonRow: ActionRowBuilder<MessageActionRowComponentBuilder> } {
+    if (panelType === "buttons") {
+        const categoryButtons = categories.slice(0, 25).map((category) =>
+            new ButtonBuilder()
+                .setCustomId(`ticket:category-button:${category.slug}`)
+                .setLabel(category.name.slice(0, 80))
+                .setStyle(ButtonStyle.Primary),
+        );
 
-    const options = categories.slice(0, 25).map((category) =>
-        new StringSelectMenuOptionBuilder()
-            .setLabel(category.name.slice(0, 100))
-            .setValue(category.slug)
-            .setDescription((category.description ?? "Create this ticket").slice(0, 100)),
-    );
+        const buttonRows = chunkButtons(categoryButtons, 5).map((chunk) =>
+            new ActionRowBuilder<MessageActionRowComponentBuilder>().addComponents(chunk),
+        );
 
-    select.addOptions(options);
+        const reminderButton = new ButtonBuilder()
+            .setCustomId("ticket:category-reminder")
+            .setLabel(buttonLabel || "Need help picking?")
+            .setStyle(ButtonStyle.Secondary);
 
-    const row = new ActionRowBuilder<MessageActionRowComponentBuilder>().addComponents(select);
-    const button = new ButtonBuilder()
-        .setCustomId("ticket:category-reminder")
-        .setLabel(buttonLabel || "Need help picking?")
-        .setStyle(ButtonStyle.Secondary);
+        const reminderRow = new ActionRowBuilder<MessageActionRowComponentBuilder>().addComponents(reminderButton);
 
-    const buttonRow = new ActionRowBuilder<MessageActionRowComponentBuilder>().addComponents(button);
+        return { buttonRows, reminderRow };
+    } else {
+        const select = new StringSelectMenuBuilder()
+            .setCustomId("ticket:category-select")
+            .setPlaceholder("Select a ticket category")
+            .setMinValues(1)
+            .setMaxValues(1);
 
-    return { selectRow: row, buttonRow };
+        const options = categories.slice(0, 25).map((category) =>
+            new StringSelectMenuOptionBuilder()
+                .setLabel(category.name.slice(0, 100))
+                .setValue(category.slug)
+                .setDescription((category.description ?? "Create this ticket").slice(0, 100)),
+        );
+
+        select.addOptions(options);
+
+        const row = new ActionRowBuilder<MessageActionRowComponentBuilder>().addComponents(select);
+        const button = new ButtonBuilder()
+            .setCustomId("ticket:category-reminder")
+            .setLabel(buttonLabel || "Need help picking?")
+            .setStyle(ButtonStyle.Secondary);
+
+        const buttonRow = new ActionRowBuilder<MessageActionRowComponentBuilder>().addComponents(button);
+
+        return { selectRow: row, buttonRow };
+    }
 }
 
 function chunkButtons<T>(items: T[], chunkSize: number): T[][] {
@@ -454,7 +499,39 @@ async function sendCreationEmbed(
     const mentionString = [ownerMention, ...pingMentions.map((id) => `<@&${id}>`)]
         .filter(Boolean)
         .join(" ");
-    const message = await channel.send({ content: mentionString, embeds: [embed], components: [row] });
+    
+    let message: Message;
+    if (SUPPORT_BOT_TOKEN && supportClient) {
+        try {
+            const guild = channel.guild;
+            if (guild) {
+                const supportGuild = supportClient.guilds.cache.get(guild.id) ?? await supportClient.guilds.fetch(guild.id).catch(() => null);
+                if (supportGuild) {
+                    const supportChannel = supportGuild.channels.cache.get(channel.id) ?? await supportGuild.channels.fetch(channel.id).catch(() => null);
+                    if (supportChannel && isGuildTextChannel(supportChannel)) {
+                        message = await supportChannel.send({ content: mentionString, embeds: [embed], components: [row] });
+                        let thread: ThreadChannel | null = null;
+                        try {
+                            thread = await message.startThread({
+                                name: `${category.name} Responses`,
+                                autoArchiveDuration: ThreadAutoArchiveDuration.OneWeek,
+                            });
+                        } catch (error) {
+                            console.warn(
+                                `[${new Date().toISOString()}] Failed to start thread for ticket channel ${channel.id}:`,
+                                error,
+                            );
+                        }
+                        return { message, thread };
+                    }
+                }
+            }
+        } catch (error) {
+            console.warn(`[${new Date().toISOString()}] Failed to send message via support client, falling back to regular client:`, error);
+        }
+    }
+    
+    message = await channel.send({ content: mentionString, embeds: [embed], components: [row] });
 
     let thread: ThreadChannel | null = null;
     try {
@@ -546,15 +623,39 @@ async function postTicketAnswers(options: {
 
 async function createTicketChannelForUser(options: TicketChannelCreationOptions): Promise<TicketCreationResult> {
     const { interaction, category, panelConfig, answers, bypassCooldown } = options;
-    const guild = interaction.guild;
-    if (!guild) {
-        return {
-            success: false,
-            error: "Unable to create a ticket outside of a guild.",
-        };
-    }
-
     const userId = interaction.user.id;
+    
+    let targetGuild = interaction.guild;
+    let isDmMode = false;
+    
+    if (TICKET_MODE === "dm") {
+        if (!TICKET_DM_GUILD_ID) {
+            return {
+                success: false,
+                error: "DM mode is enabled but TICKET_DM_GUILD_ID is not configured.",
+            };
+        }
+        
+        const client = interaction.client;
+        const dmGuild = client.guilds.cache.get(TICKET_DM_GUILD_ID) ?? await client.guilds.fetch(TICKET_DM_GUILD_ID).catch(() => null);
+        
+        if (!dmGuild) {
+            return {
+                success: false,
+                error: "Unable to access the configured DM guild. Please check TICKET_DM_GUILD_ID.",
+            };
+        }
+        
+        targetGuild = dmGuild;
+        isDmMode = true;
+    } else {
+        if (!targetGuild) {
+            return {
+                success: false,
+                error: "Unable to create a ticket outside of a guild.",
+            };
+        }
+    }
 
     const openTickets = TicketRegistry.getOpenTicketsForUser(userId, category.slug);
     if (!bypassCooldown && category.maxTicketsPerUser && openTickets.length >= category.maxTicketsPerUser) {
@@ -583,15 +684,17 @@ async function createTicketChannelForUser(options: TicketChannelCreationOptions)
         }
     }
 
-    const sourceChannel =
-        (interaction.channel as GuildBasedChannel | null) ??
-        (panelConfig.channelId
-            ? ((guild.channels.cache.get(panelConfig.channelId) ??
-                (await guild.channels.fetch(panelConfig.channelId).catch(() => null))) as GuildBasedChannel | null)
-            : null);
+    const sourceChannel = !isDmMode
+        ? ((interaction.channel as GuildBasedChannel | null) ??
+            (panelConfig.channelId
+                ? ((targetGuild.channels.cache.get(panelConfig.channelId) ??
+                    (await targetGuild.channels.fetch(panelConfig.channelId).catch(() => null))) as GuildBasedChannel | null)
+                : null))
+        : null;
 
-    const parentCategory = await ensureParentCategory(sourceChannel, panelConfig.parentCategoryId);
-    const everyoneRole = guild.roles.everyone;
+    const parentCategoryId = isDmMode ? TICKET_DM_CHANNEL_CATEGORY_ID : panelConfig.parentCategoryId;
+    const parentCategory = await ensureParentCategory(sourceChannel, parentCategoryId ?? undefined);
+    const everyoneRole = targetGuild.roles.everyone;
     const permissionOverwrites = [
         {
             id: everyoneRole.id,
@@ -625,7 +728,7 @@ async function createTicketChannelForUser(options: TicketChannelCreationOptions)
         }
 
         const supportRole =
-            guild.roles.cache.get(roleId) ?? (await guild.roles.fetch(roleId).catch(() => null));
+            targetGuild.roles.cache.get(roleId) ?? (await targetGuild.roles.fetch(roleId).catch(() => null));
         if (!supportRole) {
             return;
         }
@@ -664,16 +767,23 @@ async function createTicketChannelForUser(options: TicketChannelCreationOptions)
     }
 
     const channelName = sanitizeChannelName(interaction.user.username, category.slug);
-    const topic = `Ticket owner: ${interaction.user.tag} (${interaction.user.id}) • Category: ${category.name}`;
+    const topic = `Ticket owner: ${interaction.user.tag} (${interaction.user.id}) • Category: ${category.name}${isDmMode ? " • DM Mode" : ""}`;
 
-    const ticketChannel = await guild.channels
+    if (isDmMode) {
+        const userOverwriteIndex = permissionOverwrites.findIndex((overwrite) => overwrite.id === userId);
+        if (userOverwriteIndex !== -1) {
+            permissionOverwrites.splice(userOverwriteIndex, 1);
+        }
+    }
+
+    const ticketChannel = await targetGuild.channels
         .create({
             name: channelName,
             type: ChannelType.GuildText,
             parent: parentCategory?.id,
             topic: topic.slice(0, 1024),
             permissionOverwrites,
-            reason: `Ticket created by ${interaction.user.tag} (${interaction.user.id}) for category ${category.slug}`,
+            reason: `Ticket created by ${interaction.user.tag} (${interaction.user.id}) for category ${category.slug}${isDmMode ? " (DM Mode)" : ""}`,
         })
         .catch((error) => {
             console.error(`[${new Date().toISOString()}] Failed to create ticket channel`, error);
@@ -690,23 +800,45 @@ async function createTicketChannelForUser(options: TicketChannelCreationOptions)
     const ticketId = await TicketApi.createTicket({
         categorySlug: category.slug,
         discordUserId: userId,
-        guildId: guild.id,
+        guildId: targetGuild.id,
         channelId: ticketChannel.id,
         answers,
     });
 
     TicketRegistry.add({
         channelId: ticketChannel.id,
-        guildId: guild.id,
+        guildId: targetGuild.id,
         ownerId: userId,
         categorySlug: category.slug,
         ticketId: ticketId ?? null,
         createdAt: Date.now(),
+        isDmMode,
     });
 
     const creation = await sendCreationEmbed(ticketChannel, category, `<@${userId}>`, pingRoleIds);
     const thread = creation.thread;
     const threadId = thread?.id ?? null;
+
+    if (isDmMode) {
+        try {
+            const clientForDm = SUPPORT_BOT_TOKEN && supportClient ? supportClient : interaction.client;
+            const user = await clientForDm.users.fetch(userId);
+            const dmEmbed = new EmbedBuilder()
+                .setTitle(`Ticket • ${category.name}`)
+                .setDescription(
+                    `Hello! Your ticket has been created. A member of staff will be with you shortly.\n` +
+                    `You can reply to this DM to send messages to the support team.`,
+                )
+                .setColor(DEFAULT_EMBED_COLOR)
+                .setTimestamp();
+
+            await user.send({ embeds: [dmEmbed] }).catch((error) => {
+                console.warn(`[${new Date().toISOString()}] Failed to send DM to user ${userId}:`, error);
+            });
+        } catch (error) {
+            console.warn(`[${new Date().toISOString()}] Failed to fetch user or send DM for ticket:`, error);
+        }
+    }
 
     const apiWarning = ticketId
         ? undefined
@@ -858,78 +990,170 @@ export class TicketPanelAddon {
 
     @ModalComponent({ id: /^ticket:panel-builder:/ })
     async handlePanelModal(interaction: ModalSubmitInteraction): Promise<void> {
-        const [, , sessionId] = interaction.customId.split(":");
-        const session = panelSessions.get(sessionId);
-        if (!session) {
+        try {
+            const [, , sessionId] = interaction.customId.split(":");
+            const session = panelSessions.get(sessionId);
+            if (!session) {
+                await interaction.reply({
+                    content: "This panel builder session has expired. Please run the command again.",
+                    ephemeral: true,
+                });
+                return;
+            }
+
+            panelSessions.delete(sessionId);
+
+            const title = interaction.fields.getTextInputValue("panel-title")?.trim() ?? "Support Tickets";
+            const description =
+                interaction.fields.getTextInputValue("panel-description")?.trim() ??
+                "Select a category below to open a ticket with our team.";
+            const color = parseHexColor(interaction.fields.getTextInputValue("panel-color"));
+            const buttonLabel = interaction.fields.getTextInputValue("panel-button-label")?.trim() ?? "";
+
+            const target = await resolveChannel(interaction, session.targetChannelId);
+            if (!target) {
+                await interaction.reply({
+                    content: "I can no longer access the target channel. Please try again.",
+                    ephemeral: true,
+                });
+                return;
+            }
+
+            const categories = await TicketApi.fetchCategories(true);
+            if (categories.length === 0) {
+                await interaction.reply({
+                    content:
+                        "Unable to fetch ticket categories from the website API. Please check the configuration.",
+                    ephemeral: true,
+                });
+                return;
+            }
+
+            const embed = buildPanelEmbed(title, description, color, categories);
+            const categoryComponents = buildCategorySelect(categories, buttonLabel);
+
+            let components: ActionRowBuilder<MessageActionRowComponentBuilder>[] = [];
+            if (TICKET_PANEL_TYPE === "buttons" && "buttonRows" in categoryComponents) {
+                components = categoryComponents.buttonRows;
+                if (buttonLabel) {
+                    components.push(categoryComponents.reminderRow);
+                }
+            } else if ("selectRow" in categoryComponents) {
+                components = [categoryComponents.selectRow];
+                if (buttonLabel) {
+                    components.push(categoryComponents.buttonRow);
+                }
+            }
+
+            let message: Message;
+            if (SUPPORT_BOT_TOKEN && supportClient && supportClient.user) {
+                try {
+                    console.log(`[${new Date().toISOString()}] Attempting to send ticket panel via support client`);
+                    const guild = target.guild;
+                    if (guild) {
+                        const supportGuild = supportClient.guilds.cache.get(guild.id) ?? await supportClient.guilds.fetch(guild.id).catch((error) => {
+                            console.error(`[${new Date().toISOString()}] Failed to fetch support guild ${guild.id}:`, error);
+                            return null;
+                        });
+                        if (supportGuild) {
+                            console.log(`[${new Date().toISOString()}] Found support guild: ${supportGuild.name}`);
+                            const supportChannel = supportGuild.channels.cache.get(target.id) ?? await supportGuild.channels.fetch(target.id).catch((error) => {
+                                console.error(`[${new Date().toISOString()}] Failed to fetch support channel ${target.id}:`, error);
+                                return null;
+                            });
+                            if (supportChannel && isGuildTextChannel(supportChannel)) {
+                                console.log(`[${new Date().toISOString()}] Sending panel via support client to channel ${supportChannel.name}`);
+                                message = await supportChannel.send({
+                                    embeds: [embed],
+                                    components,
+                                });
+                                console.log(`[${new Date().toISOString()}] Successfully sent panel via support client`);
+                            } else {
+                                console.warn(`[${new Date().toISOString()}] Support channel not found or not a text channel, falling back to regular client`);
+                                message = await target.send({
+                                    embeds: [embed],
+                                    components,
+                                });
+                            }
+                        } else {
+                            console.warn(`[${new Date().toISOString()}] Support guild not found, falling back to regular client`);
+                            message = await target.send({
+                                embeds: [embed],
+                                components,
+                            });
+                        }
+                    } else {
+                        console.warn(`[${new Date().toISOString()}] Target has no guild, falling back to regular client`);
+                        message = await target.send({
+                            embeds: [embed],
+                            components,
+                        });
+                    }
+                } catch (error) {
+                    console.error(`[${new Date().toISOString()}] Error sending panel via support client:`, error);
+                    console.warn(`[${new Date().toISOString()}] Falling back to regular client`);
+                    message = await target.send({
+                        embeds: [embed],
+                        components,
+                    });
+                }
+            } else {
+                console.log(`[${new Date().toISOString()}] Using regular client to send panel (SUPPORT_BOT_TOKEN=${!!SUPPORT_BOT_TOKEN}, supportClient=${!!supportClient}, supportClient.user=${!!(supportClient?.user)})`);
+                message = await target.send({
+                    embeds: [embed],
+                    components,
+                });
+            }
+
+            if (!message) {
+                throw new Error("Failed to send panel message - message is undefined");
+            }
+
+            panelConfigs.set(message.id, {
+                guildId: message.guildId ?? session.guildId,
+                channelId: message.channelId,
+                parentCategoryId: session.ticketParentId,
+                createdBy: session.createdBy,
+                createdAt: Date.now(),
+            });
+
+            console.log(`[${new Date().toISOString()}] Panel sent successfully, message ID: ${message.id}`);
             await interaction.reply({
-                content: "This panel builder session has expired. Please run the command again.",
+                content: `Ticket panel sent to <#${target.id}>.`,
                 ephemeral: true,
             });
-            return;
+        } catch (error) {
+            console.error(`[${new Date().toISOString()}] Error handling panel modal:`, error);
+            console.error(`[${new Date().toISOString()}] Error stack:`, error instanceof Error ? error.stack : "No stack trace");
+            if (!interaction.replied && !interaction.deferred) {
+                await interaction.reply({
+                    content: "Something went wrong. Try again.",
+                    ephemeral: true,
+                }).catch((replyError) => {
+                    console.error(`[${new Date().toISOString()}] Failed to send error reply:`, replyError);
+                });
+            }
         }
-
-        panelSessions.delete(sessionId);
-
-        const title = interaction.fields.getTextInputValue("panel-title")?.trim() ?? "Support Tickets";
-        const description =
-            interaction.fields.getTextInputValue("panel-description")?.trim() ??
-            "Select a category below to open a ticket with our team.";
-        const color = parseHexColor(interaction.fields.getTextInputValue("panel-color"));
-        const buttonLabel = interaction.fields.getTextInputValue("panel-button-label")?.trim() ?? "";
-
-        const categories = await TicketApi.fetchCategories(true);
-        if (categories.length === 0) {
-            await interaction.reply({
-                content:
-                    "Unable to fetch ticket categories from the website API. Please check the configuration.",
-                ephemeral: true,
-            });
-            return;
-        }
-
-        const target = await resolveChannel(interaction, session.targetChannelId);
-        if (!target) {
-            await interaction.reply({
-                content: "I can no longer access the target channel. Please try again.",
-                ephemeral: true,
-            });
-            return;
-        }
-
-        const embed = buildPanelEmbed(title, description, color, categories);
-        const { selectRow, buttonRow } = buildCategorySelect(categories, buttonLabel);
-
-        const message = await target.send({
-            embeds: [embed],
-            components: buttonLabel ? [selectRow, buttonRow] : [selectRow],
-        });
-
-        panelConfigs.set(message.id, {
-            guildId: message.guildId ?? session.guildId,
-            channelId: message.channelId,
-            parentCategoryId: session.ticketParentId,
-            createdBy: session.createdBy,
-            createdAt: Date.now(),
-        });
-
-        await interaction.reply({
-            content: `Ticket panel sent to <#${target.id}>.`,
-            ephemeral: true,
-        });
     }
 
     @ButtonComponent({ id: "ticket:category-reminder" })
     async handleReminderButton(interaction: ButtonInteraction): Promise<void> {
+        const panelConfig = panelConfigs.get(interaction.message.id);
+        const isButtons = TICKET_PANEL_TYPE === "buttons";
+        const message = isButtons
+            ? "Click the most relevant category button to make sure your ticket reaches the right team. If you're unsure, choose the closest match and staff will guide you."
+            : "Select the most relevant category from the dropdown to make sure your ticket reaches the right team. If you're unsure, choose the closest match and staff will guide you.";
+        
         await interaction.reply({
-            content:
-                "Select the most relevant category from the dropdown to make sure your ticket reaches the right team. If you're unsure, choose the closest match and staff will guide you.",
+            content: message,
             ephemeral: true,
         });
     }
 
-    @SelectMenuComponent({ id: "ticket:category-select" })
-    async handleCategorySelect(interaction: StringSelectMenuInteraction): Promise<void> {
-        const slug = interaction.values[0];
+    async handleCategorySelection(
+        interaction: StringSelectMenuInteraction | ButtonInteraction,
+        slug: string,
+    ): Promise<void> {
         const panelConfig = panelConfigs.get(interaction.message.id);
         if (!panelConfig) {
             await interaction.reply({
@@ -939,9 +1163,18 @@ export class TicketPanelAddon {
             return;
         }
 
-        const categories = await TicketApi.fetchCategories();
+        const categories = await TicketApi.fetchCategories(true);
+        if (categories.length === 0) {
+            await interaction.reply({
+                content: "Unable to fetch ticket categories. Please try again later.",
+                ephemeral: true,
+            });
+            return;
+        }
+        
         const category = categories.find((item) => item.slug === slug);
         if (!category) {
+            console.error(`[${new Date().toISOString()}] Category not found. Slug: "${slug}", Available slugs: ${categories.map(c => c.slug).join(", ")}`);
             await interaction.reply({
                 content: "That category is no longer available. Please pick another option.",
                 ephemeral: true,
@@ -1000,6 +1233,26 @@ export class TicketPanelAddon {
                 ticketCreationSessions.delete(sessionId);
             }
         }, 10 * 60_000);
+    }
+
+    @SelectMenuComponent({ id: "ticket:category-select" })
+    async handleCategorySelect(interaction: StringSelectMenuInteraction): Promise<void> {
+        const slug = interaction.values[0];
+        await this.handleCategorySelection(interaction, slug);
+    }
+
+    @ButtonComponent({ id: /^ticket:category-button:/ })
+    async handleCategoryButton(interaction: ButtonInteraction): Promise<void> {
+        const parts = interaction.customId.split(":");
+        const slug = parts.slice(2).join(":");
+        if (!slug) {
+            await interaction.reply({
+                content: "Invalid category button. Please try again.",
+                ephemeral: true,
+            });
+            return;
+        }
+        await this.handleCategorySelection(interaction, slug);
     }
 
     @ModalComponent({ id: /^ticket:create:/ })
@@ -1269,10 +1522,10 @@ export class TicketPanelAddon {
             return;
         }
 
-        const guild = interaction.guild;
+        const guild = interaction.guild ?? (interaction.client.guilds.cache.get(ticket.guildId) ?? await interaction.client.guilds.fetch(ticket.guildId).catch(() => null));
         if (!guild) {
             await interaction.reply({
-                content: "Unable to close ticket outside of a guild.",
+                content: "Unable to close ticket - guild not found.",
                 ephemeral: true,
             });
             return;
@@ -1328,8 +1581,24 @@ export class TicketPanelAddon {
 
         await channel.send(`🔒 Ticket closed by <@${interaction.user.id}>. This channel will be deleted.`);
 
+        if (ticket.isDmMode) {
+            try {
+                const clientForDm = SUPPORT_BOT_TOKEN && supportClient ? supportClient : interaction.client;
+                const user = await clientForDm.users.fetch(ticket.ownerId);
+                const dmEmbed = new EmbedBuilder()
+                    .setTitle("Ticket Closed")
+                    .setDescription(`Your ticket **${ticket.categorySlug}** has been closed by ${interaction.user.tag}.`)
+                    .setColor(DEFAULT_EMBED_COLOR)
+                    .setTimestamp();
+
+                await user.send({ embeds: [dmEmbed] }).catch(() => {
+                });
+            } catch (error) {
+            }
+        }
+
         setTimeout(async () => {
-            await channel.delete(`Ticket closed by ${interaction.user.tag}`).catch((error) => {
+            await channel.delete(`Ticket closed by ${interaction.user.tag}`).catch((error: unknown) => {
                 console.error(`[${new Date().toISOString()}] Failed to delete ticket channel`, error);
             });
         }, 5_000);
@@ -1337,7 +1606,102 @@ export class TicketPanelAddon {
 
     @On({ event: "messageCreate" })
     async onTicketMessage([message]: ArgsOf<"messageCreate">): Promise<void> {
-        if (message.author.bot || !message.guild) {
+        if (message.author.bot) {
+            return;
+        }
+
+        if (SUPPORT_BOT_TOKEN && supportClient) {
+            if (message.client.user?.id !== supportClient.user?.id) {
+                return;
+            }
+            if (message.author.id === supportClient.user?.id) {
+                return;
+            }
+        } else {
+            if (message.author.id === message.client.user?.id) {
+                return;
+            }
+        }
+
+        const clientToUse = SUPPORT_BOT_TOKEN && supportClient ? supportClient : message.client;
+
+        if (!message.guild && message.channel.type === ChannelType.DM) {
+            console.log(`[${new Date().toISOString()}] Received DM from ${message.author.id} (${message.author.tag})`);
+            const openTickets = TicketRegistry.getOpenTicketsForUser(message.author.id);
+            console.log(`[${new Date().toISOString()}] Found ${openTickets.length} open tickets for user`);
+            const dmTickets = openTickets.filter((t) => t.isDmMode);
+            console.log(`[${new Date().toISOString()}] Found ${dmTickets.length} DM mode tickets`);
+            
+            const dmTicket = dmTickets.sort((a, b) => b.createdAt - a.createdAt)[0];
+            
+            if (dmTicket) {
+                console.log(`[${new Date().toISOString()}] Processing DM ticket: channelId=${dmTicket.channelId}, guildId=${dmTicket.guildId}`);
+                try {
+                    const guild = clientToUse.guilds.cache.get(dmTicket.guildId) ?? await clientToUse.guilds.fetch(dmTicket.guildId).catch((error) => {
+                        console.error(`[${new Date().toISOString()}] Failed to fetch guild ${dmTicket.guildId}:`, error);
+                        return null;
+                    });
+                    if (guild) {
+                        console.log(`[${new Date().toISOString()}] Found guild: ${guild.name}`);
+                        const channel = guild.channels.cache.get(dmTicket.channelId) ?? await guild.channels.fetch(dmTicket.channelId).catch((error) => {
+                            console.error(`[${new Date().toISOString()}] Failed to fetch channel ${dmTicket.channelId}:`, error);
+                            return null;
+                        });
+                        if (channel && isGuildTextChannel(channel)) {
+                            console.log(`[${new Date().toISOString()}] Found channel: ${channel.name}, forwarding message`);
+                            const attachments: string[] = [...message.attachments.values()].map((att) => att.url);
+                            const embed = new EmbedBuilder()
+                                .setAuthor({
+                                    name: message.author.tag,
+                                    iconURL: message.author.displayAvatarURL() ?? undefined,
+                                })
+                                .setDescription(message.content || "(no content)")
+                                .setColor(DEFAULT_EMBED_COLOR)
+                                .setTimestamp();
+
+                            let content = message.content || "";
+                            if (attachments.length > 0) {
+                                content += (content ? "\n\n" : "") + "**Attachments:**\n" + attachments.join("\n");
+                            }
+
+                            await channel.send({
+                                content: content || undefined,
+                                embeds: [embed],
+                            }).then(() => {
+                                console.log(`[${new Date().toISOString()}] Successfully forwarded DM to channel ${channel.id}`);
+                            }).catch((error: unknown) => {
+                                console.error(`[${new Date().toISOString()}] Failed to forward DM to channel:`, error);
+                            });
+
+                            if (dmTicket.ticketId) {
+                                await TicketApi.postMessage(dmTicket.ticketId, {
+                                    content: message.content || "(no content)",
+                                    discordUserId: message.author.id,
+                                    attachments: attachments.length > 0 ? attachments : undefined,
+                                    metadata: {
+                                        messageId: message.id,
+                                        channelId: channel.id,
+                                        discordUserId: message.author.id,
+                                        isDm: true,
+                                    },
+                                });
+                            }
+                        } else {
+                            console.warn(`[${new Date().toISOString()}] Channel ${dmTicket.channelId} not found or not a text channel`);
+                        }
+                    } else {
+                        console.warn(`[${new Date().toISOString()}] Guild ${dmTicket.guildId} not found`);
+                    }
+                } catch (error) {
+                    console.error(`[${new Date().toISOString()}] Error forwarding DM to channel:`, error);
+                }
+            } else {
+                console.log(`[${new Date().toISOString()}] No DM mode ticket found for user ${message.author.id}`);
+            }
+            return;
+        }
+
+        if (!message.guild) {
             return;
         }
 
@@ -1347,6 +1711,35 @@ export class TicketPanelAddon {
         }
 
         const attachments: string[] = [...message.attachments.values()].map((att) => att.url);
+
+        if (ticket.isDmMode) {
+            try {
+                const clientForDm = SUPPORT_BOT_TOKEN && supportClient ? supportClient : clientToUse;
+                const user = await clientForDm.users.fetch(ticket.ownerId);
+                const embed = new EmbedBuilder()
+                    .setAuthor({
+                        name: message.author.tag,
+                        iconURL: message.author.displayAvatarURL() ?? undefined,
+                    })
+                    .setDescription(message.content || "(no content)")
+                    .setColor(DEFAULT_EMBED_COLOR)
+                    .setTimestamp();
+
+                let content = message.content || "";
+                if (attachments.length > 0) {
+                    content += (content ? "\n\n" : "") + "**Attachments:**\n" + attachments.join("\n");
+                }
+
+                await user.send({
+                    content: content || undefined,
+                    embeds: [embed],
+                }).catch((error: unknown) => {
+                    console.warn(`[${new Date().toISOString()}] Failed to forward channel message to user DM:`, error);
+                });
+            } catch (error) {
+                console.warn(`[${new Date().toISOString()}] Failed to fetch user or send DM:`, error);
+            }
+        }
 
         if (ticket.ticketId) {
             await TicketApi.postMessage(ticket.ticketId, {
@@ -1376,11 +1769,21 @@ export class TicketPanelAddon {
 
     @On({ event: "interactionCreate" })
     async ensurePanelConfig([interaction]: ArgsOf<"interactionCreate">): Promise<void> {
-        if (!interaction.isMessageComponent() || interaction.componentType !== ComponentType.StringSelect) {
+        if (!interaction.isMessageComponent()) {
             return;
         }
 
-        if (interaction.customId !== "ticket:category-select") {
+        const isSelectMenu = interaction.componentType === ComponentType.StringSelect;
+        const isButton = interaction.componentType === ComponentType.Button;
+        
+        if (!isSelectMenu && !isButton) {
+            return;
+        }
+
+        const isCategorySelect = interaction.customId === "ticket:category-select";
+        const isCategoryButton = typeof interaction.customId === "string" && interaction.customId.startsWith("ticket:category-button:");
+
+        if (!isCategorySelect && !isCategoryButton) {
             return;
         }
 

@@ -34,6 +34,9 @@ function isRateLimited(endpoint: string): boolean {
     return false;
 }
 
+let supportClient: Client | null = null;
+let linkClient: Client | null = null;
+
 async function start() {
     const client = new Client({
         botId: config.CLIENT_ID,
@@ -43,6 +46,7 @@ async function start() {
             IntentsBitField.Flags.GuildMembers,
             IntentsBitField.Flags.GuildMessages,
             IntentsBitField.Flags.MessageContent,
+            IntentsBitField.Flags.DirectMessages,
         ],
         botGuilds: config.GUILD_IDS,
         partials: [Partials.GuildMember]
@@ -119,7 +123,65 @@ async function start() {
         throw Error("Could not find BOT_TOKEN in config.json");
     }
 
+    if ((config as any).SUPPORT_BOT_TOKEN && typeof (config as any).SUPPORT_BOT_TOKEN === "string" && (config as any).SUPPORT_BOT_TOKEN.trim().length > 0) {
+        supportClient = new Client({
+            intents: [
+                IntentsBitField.Flags.Guilds,
+                IntentsBitField.Flags.GuildModeration,
+                IntentsBitField.Flags.GuildMembers,
+                IntentsBitField.Flags.GuildMessages,
+                IntentsBitField.Flags.MessageContent,
+                IntentsBitField.Flags.DirectMessages,
+            ],
+            botGuilds: config.GUILD_IDS,
+            partials: [Partials.GuildMember]
+        });
+
+        supportClient.once("ready", async () => {
+            console.log(">> Support bot started");
+        });
+
+        supportClient.on("interactionCreate", (interaction: any) => {
+            supportClient!.executeInteraction(interaction);
+        });
+
+        supportClient.login((config as any).SUPPORT_BOT_TOKEN).catch((error) => {
+            console.error(`[${new Date().toISOString()}] Failed to login support bot:`, error);
+            supportClient = null;
+        });
+    }
+
+    if ((config as any).LINK_BOT_TOKEN && typeof (config as any).LINK_BOT_TOKEN === "string" && (config as any).LINK_BOT_TOKEN.trim().length > 0) {
+        linkClient = new Client({
+            intents: [
+                IntentsBitField.Flags.Guilds,
+                IntentsBitField.Flags.GuildModeration,
+                IntentsBitField.Flags.GuildMembers,
+                IntentsBitField.Flags.GuildMessages,
+                IntentsBitField.Flags.MessageContent,
+                IntentsBitField.Flags.DirectMessages,
+            ],
+            botGuilds: config.GUILD_IDS,
+            partials: [Partials.GuildMember]
+        });
+
+        linkClient.once("ready", async () => {
+            console.log(">> Link bot started");
+        });
+
+        linkClient.on("interactionCreate", (interaction: any) => {
+            linkClient!.executeInteraction(interaction);
+        });
+
+        linkClient.login((config as any).LINK_BOT_TOKEN).catch((error) => {
+            console.error(`[${new Date().toISOString()}] Failed to login link bot:`, error);
+            linkClient = null;
+        });
+    }
+
     await client.login(config.BOT_TOKEN);
 }
+
+export { supportClient, linkClient };
 
 start();

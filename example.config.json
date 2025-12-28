@@ -24,5 +24,11 @@
     },
     "TICKET_CATEGORY_PING_ROLES": { 
       "<categorySlug>": ["roleIdA", "roleIdB"] 
-    }
+    },
+    "TICKET_PANEL_TYPE": "dropdown",
+    "SUPPORT_BOT_TOKEN": "",
+    "LINK_BOT_TOKEN": "",
+    "TICKET_MODE": "channel",
+    "TICKET_DM_GUILD_ID": "",
+    "TICKET_DM_CHANNEL_CATEGORY_ID": ""
   }

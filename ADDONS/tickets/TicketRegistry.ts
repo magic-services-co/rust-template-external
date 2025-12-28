@@ -8,6 +8,7 @@ export interface StoredTicket {
     ticketId: string | null;
     createdAt: number;
     closedAt?: number;
+    isDmMode?: boolean;
 }
 
 interface TicketStoreSchema {
