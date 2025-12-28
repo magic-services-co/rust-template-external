@@ -1,0 +1,28 @@
+{
+    "CLIENT_ID": "",
+    "BOT_TOKEN": "",
+    "GUILD_IDS": [ "" ],
+    "VIEW_MEMBERS_ROLES": ["RoleID"],
+    "SYNC_USERS_PERMS": ["-- | Backend Developer |"],
+    "MAP_VOTES_CHANNELS": [
+      {
+        "guild": "",
+        "channel": ""
+      }
+    ],
+    "ROLE_SYNC_ENABLED": false,
+    "API_KEY": "",
+    "UPDATE_CHECK_FREQUENCY (MINUTES)": 1,
+    "SET_DISCORD_NAME_TO_STEAM_NAME": false,
+    "EMBED_HEX": "0099FF",
+    "ACTIVITY_TYPE": "Custom",
+    "STATUS_TEXT": "{USERS_AMOUNT} users linked!",
+    "API_ENDPOINT": "https://YourDomain.com/api",
+    "TICKET_SUPPORT_ROLE_IDS": ["roleId1", "roleId2"],
+    "TICKET_CATEGORY_ACCESS_ROLES": { 
+      "<categorySlug>": ["roleId1", "roleId2"] 
+    },
+    "TICKET_CATEGORY_PING_ROLES": { 
+      "<categorySlug>": ["roleIdA", "roleIdB"] 
+    }
+  }
