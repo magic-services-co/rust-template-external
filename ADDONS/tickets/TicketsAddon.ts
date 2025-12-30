@@ -456,18 +456,19 @@ function canManageTicket(member: GuildMember | null, ownerId: string): boolean {
 async function ensureParentCategory(
     guildChannel: GuildBasedChannel | null,
     parentId?: string,
+    guild?: import("discord.js").Guild,
 ): Promise<CategoryChannel | null> {
     if (!parentId) {
         return null;
     }
-    const guild = guildChannel?.guild;
-    if (!guild) {
+    const targetGuild = guild ?? guildChannel?.guild;
+    if (!targetGuild) {
         return null;
     }
 
     const parent =
-        guild.channels.cache.get(parentId) ??
-        (await guild.channels.fetch(parentId).catch(() => null));
+        targetGuild.channels.cache.get(parentId) ??
+        (await targetGuild.channels.fetch(parentId).catch(() => null));
 
     if (parent && parent.type === ChannelType.GuildCategory) {
         return parent as CategoryChannel;
@@ -693,7 +694,7 @@ async function createTicketChannelForUser(options: TicketChannelCreationOptions)
         : null;
 
     const parentCategoryId = isDmMode ? TICKET_DM_CHANNEL_CATEGORY_ID : panelConfig.parentCategoryId;
-    const parentCategory = await ensureParentCategory(sourceChannel, parentCategoryId ?? undefined);
+    const parentCategory = await ensureParentCategory(sourceChannel, parentCategoryId ?? undefined, isDmMode ? targetGuild : undefined);
     const everyoneRole = targetGuild.roles.everyone;
     const permissionOverwrites = [
         {
@@ -1486,15 +1487,17 @@ export class TicketPanelAddon {
         if (message) {
             const updatedRows = message.components.map((row) => {
                 const builder = new ActionRowBuilder<MessageActionRowComponentBuilder>();
-                for (const component of row.components) {
-                    if (component.type === ComponentType.Button) {
-                        const button = ButtonBuilder.from(component as any);
-                        const componentCustomId =
-                            (component as any).customId ?? (component as any).data?.custom_id;
-                        if (componentCustomId === `ticket:followup:${followupId}`) {
-                            button.setDisabled(true);
+                if ('components' in row && Array.isArray(row.components)) {
+                    for (const component of row.components) {
+                        if (component.type === ComponentType.Button) {
+                            const button = ButtonBuilder.from(component as any);
+                            const componentCustomId =
+                                (component as any).customId ?? (component as any).data?.custom_id;
+                            if (componentCustomId === `ticket:followup:${followupId}`) {
+                                button.setDisabled(true);
+                            }
+                            builder.addComponents(button);
                         }
-                        builder.addComponents(button);
                     }
                 }
                 return builder;
@@ -1579,22 +1582,42 @@ export class TicketPanelAddon {
             ephemeral: true,
         });
 
-        await channel.send(`🔒 Ticket closed by <@${interaction.user.id}>. This channel will be deleted.`);
+        const transcriptButton = ticket.ticketId
+            ? new ButtonBuilder()
+                  .setLabel("View Transcript")
+                  .setStyle(ButtonStyle.Link)
+                  .setURL(`https://rusticon.co/ticket/${ticket.ticketId}`)
+            : null;
 
-        if (ticket.isDmMode) {
-            try {
-                const clientForDm = SUPPORT_BOT_TOKEN && supportClient ? supportClient : interaction.client;
-                const user = await clientForDm.users.fetch(ticket.ownerId);
-                const dmEmbed = new EmbedBuilder()
-                    .setTitle("Ticket Closed")
-                    .setDescription(`Your ticket **${ticket.categorySlug}** has been closed by ${interaction.user.tag}.`)
-                    .setColor(DEFAULT_EMBED_COLOR)
-                    .setTimestamp();
+        const channelComponents = transcriptButton
+            ? [new ActionRowBuilder<MessageActionRowComponentBuilder>().addComponents(transcriptButton)]
+            : [];
 
-                await user.send({ embeds: [dmEmbed] }).catch(() => {
-                });
-            } catch (error) {
-            }
+        await channel.send({
+            content: `🔒 Ticket closed by <@${interaction.user.id}>. This channel will be deleted.`,
+            components: channelComponents,
+        });
+
+        try {
+            const clientForDm = SUPPORT_BOT_TOKEN && supportClient ? supportClient : interaction.client;
+            const user = await clientForDm.users.fetch(ticket.ownerId);
+            const dmEmbed = new EmbedBuilder()
+                .setTitle("Ticket Closed")
+                .setDescription(
+                    ticket.isDmMode
+                        ? `Your ticket **${ticket.categorySlug}** has been closed by ${interaction.user.tag}.`
+                        : `Your ticket **${ticket.categorySlug}** has been closed by ${interaction.user.tag}. You can view the transcript using the button below.`
+                )
+                .setColor(DEFAULT_EMBED_COLOR)
+                .setTimestamp();
+
+            const dmComponents = transcriptButton
+                ? [new ActionRowBuilder<MessageActionRowComponentBuilder>().addComponents(transcriptButton)]
+                : [];
+
+            await user.send({ embeds: [dmEmbed], components: dmComponents }).catch(() => {
+            });
+        } catch (error) {
         }
 
         setTimeout(async () => {

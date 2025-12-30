@@ -449,6 +449,23 @@ export class Api {
         }
     }
 
+    static async fetchMapVoteResults(voteId: string): Promise<{ [mapOptionId: string]: number } | null> {
+        try {
+            const url = new URL(config.API_ENDPOINT + `/maps/${voteId}/results`);
+            const request: RequestInfo = new Request(url, {
+                method: 'GET',
+                headers: new Headers({ 'x-api-key': config.API_KEY }),
+            });
+            const res = await fetch(request);
+            if (!res.ok) {
+                return null;
+            }
+            return await res.json();
+        } catch (error) {
+            return null;
+        }
+    }
+
     static async fetchAndPostMaps(client: Client, lastFetch: string) {
         const url = new URL(config.API_ENDPOINT + CONSTANTS.FETCH_MAP_VOTES);
         url.searchParams.set('startDate', lastFetch);
@@ -489,51 +506,205 @@ export class Api {
                 continue;
             }
 
-            for (const mapOption of vote.map_options) {
-                if (!mapOption || !mapOption.url || !mapOption.imageUrl) {
+            const sortedMaps = [...vote.map_options].sort((a, b) => a.order - b.order);
+            
+            const voteEndDate = new Date(vote.vote_end);
+            const now = new Date();
+            const isPollEnded = voteEndDate < now;
+
+            for (const channel of channels) {
+                if (!channel.isSendable()) {
                     continue;
                 }
 
-                const title = `Map Vote for ${vote.server?.server_name || 'Server'} - Option ${mapOption.order + 1}`;
-                const description = `Vote ends: ${new Date(vote.vote_end).toLocaleString()}\nMap size: ${mapOption.size}\nSeed: ${mapOption.seed}`;
+                try {
+                    const messages = await channel.messages.fetch({ limit: 100 });
+                    const existingMessage = messages.find(msg => {
+                        if (msg.author.id !== client.user?.id) return false;
+                        const embed = msg.embeds[0];
+                        if (!embed) return false;
+                        return embed.footer?.text?.includes(vote.id) || 
+                               embed.description?.includes(`Poll ID: ${vote.id}`) ||
+                               (embed.title?.includes(vote.server?.server_name || 'Server') && 
+                                (embed.title?.includes('Map Poll') || embed.title?.includes('Poll Ended')));
+                    });
 
-                for (const channel of channels) {
-                    if (channel.isSendable()) {
-                        const embed = new EmbedBuilder()
-                            .setTitle(title)
-                            .setDescription(description)
-                            .setColor(0x0099FF)
-                            .setImage(mapOption.imageUrl);
-
-                        const mapButton = new ButtonBuilder()
-                            .setLabel("View on RustMaps.com")
-                            .setStyle(ButtonStyle.Link)
-                            .setURL(mapOption.url);
-
-                        const siteButton = new ButtonBuilder()
-                            .setLabel("View votes on site")
-                            .setStyle(ButtonStyle.Link)
-                            .setURL(`${config.API_ENDPOINT.replace("/api", "")}/maps/${vote.id}`);
-
-                        const row = new ActionRowBuilder<MessageActionRowComponentBuilder>()
-                            .addComponents([mapButton, siteButton]);
-
-                        try {
-                            const messages = await channel.messages.fetch({ limit: 100 });
-                            const existingMessage = messages.find(msg => 
-                                msg.embeds[0]?.title === title && 
-                                msg.author.id === client.user?.id
-                            );
-
-                            if (existingMessage) {
-                                await existingMessage.edit({ embeds: [embed], components: [row] });
-                            } else {
-                                await channel.send({ embeds: [embed], components: [row] });
+                    if (isPollEnded) {
+                        const voteResults = await this.fetchMapVoteResults(vote.id);
+                        
+                        let winnerMap = sortedMaps[0];
+                        let maxVotes = 0;
+                        const voteCounts: { map: typeof sortedMaps[0], votes: number }[] = [];
+                        
+                        for (const mapOption of sortedMaps) {
+                            const votes = voteResults?.[mapOption.id] || 0;
+                            voteCounts.push({ map: mapOption, votes });
+                            if (votes > maxVotes) {
+                                maxVotes = votes;
+                                winnerMap = mapOption;
                             }
+                        }
+
+                        voteCounts.sort((a, b) => b.votes - a.votes);
+
+                        const resultsEmbed = new EmbedBuilder()
+                            .setTitle("Poll Ended: Results")
+                            .setColor(parseInt(config.EMBED_HEX, 16))
+                            .setDescription(`The poll has ended! The map with the most votes is [Map ${winnerMap.order + 1}](${winnerMap.url}).`)
+                            .setFooter({ text: `Poll ID: ${vote.id}` })
+                            .addFields([
+                                {
+                                    name: "Final Vote Counts:",
+                                    value: voteCounts.map(vc => 
+                                        `[Map ${vc.map.order + 1}](${vc.map.url}) - ${vc.votes} vote${vc.votes !== 1 ? 's' : ''}`
+                                    ).join('\n') || 'No votes recorded'
+                                }
+                            ]);
+
+                        if (existingMessage) {
+                            await existingMessage.edit({ embeds: [resultsEmbed], components: [] });
+                        } else {
+                            await channel.send({ embeds: [resultsEmbed] });
+                        }
+                    } else {
+                        const embeds: EmbedBuilder[] = [];
+                        
+                        const gridImageUrls = vote.gridImageUrls || (vote.gridImageUrl ? [vote.gridImageUrl] : []);
+                        
+                        if (gridImageUrls.length > 0) {
+                            for (let gridIndex = 0; gridIndex < gridImageUrls.length; gridIndex++) {
+                                const gridImageUrl = gridImageUrls[gridIndex];
+                                
+                                const embed = new EmbedBuilder()
+                                    .setTitle(gridIndex === 0 ? "Server Map Polls!" : `Server Map Polls! (Continued)`)
+                                    .setDescription("Vote for the map you want!")
+                                    .setColor(parseInt(config.EMBED_HEX, 16))
+                                    .setImage(gridImageUrl)
+                                    .setFooter({ text: `Poll ID: ${vote.id}` });
+                                
+                                embeds.push(embed);
+                            }
+                        } else {
+                            const mapChunks: typeof sortedMaps[] = [];
+                            for (let i = 0; i < sortedMaps.length; i += 4) {
+                                mapChunks.push(sortedMaps.slice(i, i + 4));
+                            }
+
+                            for (let chunkIndex = 0; chunkIndex < mapChunks.length; chunkIndex++) {
+                                const chunk = mapChunks[chunkIndex];
+                                
+                                const embed = new EmbedBuilder()
+                                    .setTitle(chunkIndex === 0 ? "Server Map Polls!" : `Server Map Polls! (Continued)`)
+                                    .setDescription("Vote for the map you want!")
+                                    .setColor(parseInt(config.EMBED_HEX, 16))
+                                    .setFooter({ text: `Poll ID: ${vote.id}` });
+
+                                if (chunk[0]?.imageUrl) {
+                                    embed.setImage(chunk[0].imageUrl);
+                                }
+
+                                const fields: any[] = [];
+                                
+                                if (chunk[0]) {
+                                    fields.push({
+                                        name: `Map ${chunk[0].order + 1}`,
+                                        value: `[View Map](${chunk[0].url})\nSize: ${chunk[0].size}\nSeed: ${chunk[0].seed}`,
+                                        inline: true
+                                    });
+                                }
+                                if (chunk[1]) {
+                                    fields.push({
+                                        name: `Map ${chunk[1].order + 1}`,
+                                        value: `[View Map](${chunk[1].url})\nSize: ${chunk[1].size}\nSeed: ${chunk[1].seed}`,
+                                        inline: true
+                                    });
+                                }
+                                
+                                if (chunk[2]) {
+                                    fields.push({
+                                        name: `Map ${chunk[2].order + 1}`,
+                                        value: `[View Map](${chunk[2].url})\nSize: ${chunk[2].size}\nSeed: ${chunk[2].seed}`,
+                                        inline: true
+                                    });
+                                }
+                                if (chunk[3]) {
+                                    fields.push({
+                                        name: `Map ${chunk[3].order + 1}`,
+                                        value: `[View Map](${chunk[3].url})\nSize: ${chunk[3].size}\nSeed: ${chunk[3].seed}`,
+                                        inline: true
+                                    });
+                                }
+
+                                embed.addFields(fields);
+                                embeds.push(embed);
+                            }
+                        }
+
+                        const voteEndDate = new Date(vote.vote_end);
+                        const voteEndTimestamp = Math.floor(voteEndDate.getTime() / 1000);
+                        const discordTimestamp = `<t:${voteEndTimestamp}:F>`;
+
+                        const infoEmbed = new EmbedBuilder()
+                            .setTitle("Voting Guide and Poll Information")
+                            .setColor(parseInt(config.EMBED_HEX, 16))
+                            .setDescription(
+                                `**How to Vote:**\n` +
+                                `Click the buttons below to vote for your favorite map on the website. Your vote will be counted.\n\n` +
+                                `**Poll Duration:**\n` +
+                                `The poll will end ${discordTimestamp}.\n\n` +
+                                `**Bonus for Special Roles:**\n` +
+                                `Users with special roles may have their votes counted as two instead of one.`
+                            )
+                            .setFooter({ text: `Poll ID: ${vote.id}` });
+
+                        const buttonRows: ActionRowBuilder<MessageActionRowComponentBuilder>[] = [];
+                        const maxButtonsPerRow = 5;
+                        
+                        let voteUrl: string;
+                        try {
+                            const apiUrl = new URL(config.API_ENDPOINT);
+                            let pathname = apiUrl.pathname.replace(/^\/api\/?$/, '').replace(/\/api\/?$/, '');
+                            pathname = pathname.replace(/\/+$/, '');
+                            voteUrl = `${apiUrl.protocol}//${apiUrl.host}${pathname}/maps/${vote.id}`;
                         } catch (error) {
-                            continue;
+                            let baseUrl = config.API_ENDPOINT.replace(/\/api\/?$/, '');
+                            baseUrl = baseUrl.replace(/\/+$/, '');
+                            voteUrl = `${baseUrl}/maps/${vote.id}`;
+                        }
+                        
+                        for (let i = 0; i < sortedMaps.length; i += maxButtonsPerRow) {
+                            const row = new ActionRowBuilder<MessageActionRowComponentBuilder>();
+                            const buttonsInRow = sortedMaps.slice(i, i + maxButtonsPerRow);
+                            
+                            for (const mapOption of buttonsInRow) {
+                                const button = new ButtonBuilder()
+                                    .setLabel(`Map ${mapOption.order + 1}`)
+                                    .setStyle(ButtonStyle.Link)
+                                    .setURL(voteUrl);
+                                row.addComponents(button);
+                            }
+                            
+                            buttonRows.push(row);
+                        }
+
+                        const allEmbeds = [...embeds, infoEmbed];
+                        const components = buttonRows;
+
+                        if (existingMessage) {
+                            await existingMessage.edit({ 
+                                embeds: allEmbeds, 
+                                components
+                            });
+                        } else {
+                            await channel.send({ 
+                                embeds: allEmbeds, 
+                                components
+                            });
                         }
                     }
+                } catch (error) {
+                    console.error(`[${new Date().toISOString()}] Error processing map vote ${vote.id}:`, error);
+                    continue;
                 }
             }
         }
@@ -1275,6 +1446,8 @@ interface MapVotes {
     map_start: string;
     created_at: string;
     updated_at: string;
+    gridImageUrl?: string;
+    gridImageUrls?: string[];
     map_options: {
         id: string;
         order: number;

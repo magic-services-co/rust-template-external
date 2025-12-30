@@ -103,9 +103,18 @@ async function start() {
                     activityType = ActivityType.Streaming;
                     break;
             }
+            
+            const hasLinkBot = (config as any).LINK_BOT_TOKEN && typeof (config as any).LINK_BOT_TOKEN === "string" && (config as any).LINK_BOT_TOKEN.trim().length > 0;
+            let statusText = config.STATUS_TEXT;
+            if (hasLinkBot) {
+                statusText = statusText.replace('{USERS_AMOUNT}', '').trim();
+            } else {
+                statusText = statusText.replace('{USERS_AMOUNT}', `${await Api.fetchLinkedCount()}`);
+            }
+            
             client.user?.setPresence({
                 status: 'online',
-                activities: [{type: activityType, name: config.STATUS_TEXT.replace('{USERS_AMOUNT}', `${await Api.fetchLinkedCount()}`)}]
+                activities: [{type: activityType, name: statusText}]
             });
         }, config["UPDATE_CHECK_FREQUENCY (MINUTES)"] * 60_000);
         await client.initApplicationCommands();
@@ -139,6 +148,22 @@ async function start() {
 
         supportClient.once("ready", async () => {
             console.log(">> Support bot started");
+            
+            const { TicketRegistry } = await import("./ADDONS/tickets/TicketRegistry.ts");
+            
+            const ticketCount = TicketRegistry.getTotalTicketCount();
+            supportClient!.user?.setPresence({
+                status: 'online',
+                activities: [{type: ActivityType.Custom, name: `${ticketCount} tickets`}]
+            });
+
+            setInterval(async () => {
+                const ticketCount = TicketRegistry.getTotalTicketCount();
+                supportClient?.user?.setPresence({
+                    status: 'online',
+                    activities: [{type: ActivityType.Custom, name: `${ticketCount} tickets`}]
+                });
+            }, config["UPDATE_CHECK_FREQUENCY (MINUTES)"] * 60_000);
         });
 
         supportClient.on("interactionCreate", (interaction: any) => {
@@ -167,6 +192,20 @@ async function start() {
 
         linkClient.once("ready", async () => {
             console.log(">> Link bot started");
+            
+            const linkedCount = await Api.fetchLinkedCount();
+            linkClient!.user?.setPresence({
+                status: 'online',
+                activities: [{type: ActivityType.Custom, name: `${linkedCount} users linked!`}]
+            });
+
+            setInterval(async () => {
+                const linkedCount = await Api.fetchLinkedCount();
+                linkClient?.user?.setPresence({
+                    status: 'online',
+                    activities: [{type: ActivityType.Custom, name: `${linkedCount} users linked!`}]
+                });
+            }, config["UPDATE_CHECK_FREQUENCY (MINUTES)"] * 60_000);
         });
 
         linkClient.on("interactionCreate", (interaction: any) => {

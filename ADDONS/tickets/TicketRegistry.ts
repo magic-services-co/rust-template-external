@@ -87,5 +87,9 @@ export class TicketRegistry {
             return ticket.createdAt >= cutoff;
         });
     }
+
+    static getTotalTicketCount(): number {
+        return tickets.length;
+    }
 }
 
