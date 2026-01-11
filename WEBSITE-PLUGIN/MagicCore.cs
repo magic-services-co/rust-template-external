@@ -14,7 +14,7 @@ using UnityEngine;
 //MagicCore created with PluginMerge v(1.0.8.0) by MJSU @ https://github.com/dassjosh/Plugin.Merge
 namespace Oxide.Plugins
 {
-    [Info("MagicCore", "Magic Services / Shady14u && Vinni P.", "1.3.0")]
+    [Info("MagicCore", "Magic Services / Shady14u && Vinni P.", "1.3.5")]
     [Description("Core Logic for the Leader Board and Linking System")]
     public partial class MagicCore : RustPlugin
     {
@@ -43,7 +43,13 @@ namespace Oxide.Plugins
             {
                 return playerStat;
             }
-            playerStat = new PlayerStat { SteamId = playerId, ServerId = _config.ServerId, LoginTime = DateTime.Now };
+            playerStat = new PlayerStat 
+            { 
+                SteamId = playerId, 
+                ServerId = _config.ServerId, 
+                LoginTime = DateTime.Now,
+                WipeId = _currentWipeId
+            };
             _playerStats[playerId] = playerStat;
             return playerStat;
         }
@@ -676,6 +682,9 @@ namespace Oxide.Plugins
         void OnServerInitialized(bool initial)
         {
             ResetPlayerStats(DateTime.Now);
+            
+            GetCurrentWipe();
+            
             foreach (var player in BasePlayer.activePlayerList)
             {
                 OnPlayerConnected(player);
@@ -713,6 +722,99 @@ namespace Oxide.Plugins
             }, this, RequestMethod.GET, GetHeaders());
         }
         
+        private void GetCurrentWipe()
+        {
+            if (_config == null)
+            {
+                LogIt("GetCurrentWipe: _config is null, cannot get wipe");
+                return;
+            }
+            
+            if (string.IsNullOrWhiteSpace(_config.ApiEndpoint))
+            {
+                LogIt("GetCurrentWipe: ApiEndpoint is null or empty, cannot get wipe");
+                return;
+            }
+            
+            if (string.IsNullOrWhiteSpace(_config.ServerId))
+            {
+                LogIt("GetCurrentWipe: ServerId is null or empty, cannot get wipe");
+                return;
+            }
+            
+            var url = $"{_config.ApiEndpoint}/wipes?serverId={Uri.EscapeDataString(_config.ServerId)}";
+            LogIt($"Fetching current wipe from: {url}");
+            
+            webrequest.Enqueue(url, null,
+            (code, response) =>
+            {
+                if (code == 200 && !string.IsNullOrEmpty(response))
+                {
+                    try
+                    {
+                        var wipe = JsonConvert.DeserializeObject<WipeData>(response);
+                        if (wipe != null)
+                        {
+                            _currentWipeId = wipe.Id;
+                            LogIt($"Current wipe ID: {wipe.Id}, Name: {wipe.Name}, Active: {wipe.IsActive}");
+                            UpdateAllStatsWithWipeId();
+                            return;
+                        }
+                    }
+                    catch
+                    {
+                    }
+                    
+                    try
+                    {
+                        var wipes = JsonConvert.DeserializeObject<List<WipeData>>(response);
+                        if (wipes != null && wipes.Count > 0)
+                        {
+                            var activeWipe = wipes.FirstOrDefault(w => w.IsActive) ?? wipes.First();
+                            _currentWipeId = activeWipe.Id;
+                            LogIt($"Current wipe ID: {activeWipe.Id}, Name: {activeWipe.Name}, Active: {activeWipe.IsActive}");
+                            UpdateAllStatsWithWipeId();
+                            return;
+                        }
+                    }
+                    catch
+                    {
+                    }
+                    
+                    try
+                    {
+                        var wipeResponse = JsonConvert.DeserializeObject<WipeResponse>(response);
+                        if (wipeResponse != null && wipeResponse.Wipe != null)
+                        {
+                            _currentWipeId = wipeResponse.Wipe.Id;
+                            LogIt($"Current wipe ID: {wipeResponse.Wipe.Id}, Name: {wipeResponse.Wipe.Name}");
+                            UpdateAllStatsWithWipeId();
+                            return;
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        LogIt($"Error deserializing wipe response: {ex.Message}, Response: {response}");
+                    }
+                }
+                else
+                {
+                    LogIt($"Get current wipe API error: {code} - {response}");
+                }
+            }, this, RequestMethod.GET, GetHeaders());
+        }
+        
+        private void UpdateAllStatsWithWipeId()
+        {
+            if (_currentWipeId.HasValue)
+            {
+                foreach (var stat in _playerStats.Values)
+                {
+                    stat.WipeId = _currentWipeId;
+                }
+            }
+        }
+        
         private void TriggerWipe(string wipeName = null)
         {
             if (_config == null)
@@ -747,7 +849,7 @@ namespace Oxide.Plugins
                 
                 LogIt($"Triggering wipe: {jsonBody}");
                 
-                webrequest.Enqueue($"{_config.ApiEndpoint}/api/wipes", jsonBody,
+                webrequest.Enqueue($"{_config.ApiEndpoint}/wipes", jsonBody,
                 (code, response) =>
                 {
                     if (code == 200 && !string.IsNullOrEmpty(response))
@@ -760,7 +862,9 @@ namespace Oxide.Plugins
                                 LogIt($"Wipe triggered successfully: {wipeResponse.Message}");
                                 if (wipeResponse.Wipe != null)
                                 {
+                                    _currentWipeId = wipeResponse.Wipe.Id;
                                     LogIt($"New wipe ID: {wipeResponse.Wipe.Id}, Name: {wipeResponse.Wipe.Name}");
+                                    UpdateAllStatsWithWipeId();
                                 }
                             }
                             else
@@ -1536,6 +1640,7 @@ namespace Oxide.Plugins
 
         #region 9.MagicCore.Stats.cs
         private readonly Dictionary<ulong, PlayerStat> _playerStats = new Dictionary<ulong, PlayerStat>();
+        private int? _currentWipeId = null;
         
         private void ResetPlayerStats(DateTime loginTime)
         {
@@ -1764,6 +1869,9 @@ namespace Oxide.Plugins
             
             [JsonProperty(PropertyName = "steamId")]
             public string SteamIdString => SteamId.ToString();
+            
+            [JsonProperty(PropertyName = "wipeId")]
+            public int? WipeId { get; set; }
             
             [JsonProperty(PropertyName = "c2")] public int StoneFarmed { get; set; }
             
