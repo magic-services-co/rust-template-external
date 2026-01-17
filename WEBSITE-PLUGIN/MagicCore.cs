@@ -14,7 +14,7 @@ using UnityEngine;
 //MagicCore created with PluginMerge v(1.0.8.0) by MJSU @ https://github.com/dassjosh/Plugin.Merge
 namespace Oxide.Plugins
 {
-    [Info("MagicCore", "Magic Services / Shady14u && Vinni P.", "1.3.6")]
+    [Info("MagicCore", "Magic Services / Shady14u && Vinni P.", "1.3.7")]
     [Description("Core Logic for the Leader Board and Linking System")]
     public partial class MagicCore : RustPlugin
     {
@@ -750,6 +750,12 @@ namespace Oxide.Plugins
             {
                 if (code == 200 && !string.IsNullOrEmpty(response))
                 {
+                    if (response.Trim() == "[]")
+                    {
+                        LogIt("No wipes found (empty array response)");
+                        return;
+                    }
+                    
                     try
                     {
                         var wipe = JsonConvert.DeserializeObject<WipeData>(response);
@@ -762,8 +768,7 @@ namespace Oxide.Plugins
                         }
                         else if (wipe != null && wipe.Id == 0)
                         {
-                            LogIt("No valid wipe found (ID is 0), creating new wipe...");
-                            TriggerWipe();
+                            LogIt("API returned wipe with ID 0 (likely no wipe exists)");
                             return;
                         }
                     }
@@ -786,8 +791,7 @@ namespace Oxide.Plugins
                             }
                         }
                         
-                        LogIt("No valid wipes found in response, creating new wipe...");
-                        TriggerWipe();
+                        LogIt("No valid wipes found in list response");
                         return;
                     }
                     catch
@@ -806,8 +810,7 @@ namespace Oxide.Plugins
                         }
                         else if (wipeResponse != null && (wipeResponse.Wipe == null || wipeResponse.Wipe.Id == 0))
                         {
-                            LogIt("No valid wipe in response, creating new wipe...");
-                            TriggerWipe();
+                            LogIt("API response indicates no valid wipe");
                             return;
                         }
                     }
@@ -816,8 +819,11 @@ namespace Oxide.Plugins
                         LogIt($"Error deserializing wipe response: {ex.Message}, Response: {response}");
                     }
                     
-                    LogIt("Could not parse wipe response, attempting to create new wipe...");
-                    TriggerWipe();
+                    LogIt("Could not parse wipe response, assuming no wipe exists");
+                }
+                else if (code == 404)
+                {
+                    LogIt("No wipe found (404 response)");
                 }
                 else
                 {
