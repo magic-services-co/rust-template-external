@@ -81,6 +81,9 @@ web_modules/
 
 # Microbundle cache
 
+config.json
+bun.lockb
+
 .rpt2_cache/
 .rts2_cache_cjs/
 .rts2_cache_es/
