@@ -644,17 +644,29 @@ export class Api {
                         const voteEndTimestamp = Math.floor(voteEndDate.getTime() / 1000);
                         const discordTimestamp = `<t:${voteEndTimestamp}:F>`;
 
+                        const specialRoleWeights = (vote.roleVoteWeights || []).filter(
+                            (r) => r && r.weight > 1 && r.roleName
+                        );
+                        const hasBonusRoles = specialRoleWeights.length > 0;
+
+                        let infoDescription =
+                            `**How to Vote:**\n` +
+                            `Click the buttons below to vote for your favorite map on the website. Your vote will be counted.\n\n` +
+                            `**Poll Duration:**\n` +
+                            `The poll will end ${discordTimestamp}.`;
+                        if (hasBonusRoles) {
+                            const roleLines = specialRoleWeights
+                                .map((r) => `${r.roleName}: x${r.weight}`)
+                                .join("\n");
+                            infoDescription +=
+                                `\n\n**Bonus for Special Roles:**\n` +
+                                `The following roles have their votes counted with a multiplier:\n${roleLines}`;
+                        }
+
                         const infoEmbed = new EmbedBuilder()
                             .setTitle("Voting Guide and Poll Information")
                             .setColor(parseInt(config.EMBED_HEX, 16))
-                            .setDescription(
-                                `**How to Vote:**\n` +
-                                `Click the buttons below to vote for your favorite map on the website. Your vote will be counted.\n\n` +
-                                `**Poll Duration:**\n` +
-                                `The poll will end ${discordTimestamp}.\n\n` +
-                                `**Bonus for Special Roles:**\n` +
-                                `Users with special roles may have their votes counted as two instead of one.`
-                            )
+                            .setDescription(infoDescription)
                             .setFooter({ text: `Poll ID: ${vote.id}` });
 
                         const buttonRows: ActionRowBuilder<MessageActionRowComponentBuilder>[] = [];
@@ -1437,6 +1449,11 @@ interface Log {
     serverId: string;
 }
 
+interface MapVoteRoleWeight {
+    roleName: string;
+    weight: number;
+}
+
 interface MapVotes {
     id: string;
     enabled: boolean;
@@ -1448,6 +1465,7 @@ interface MapVotes {
     updated_at: string;
     gridImageUrl?: string;
     gridImageUrls?: string[];
+    roleVoteWeights?: MapVoteRoleWeight[];
     map_options: {
         id: string;
         order: number;
