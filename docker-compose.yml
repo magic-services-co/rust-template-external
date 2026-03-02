@@ -1,0 +1,7 @@
+services:
+  bot:
+    build: .
+    container_name: linking-bot
+    restart: unless-stopped
+    volumes:
+      - ./config.json:/app/config.json:ro

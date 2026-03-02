@@ -160,14 +160,17 @@ export class Api {
         steamId: string, discordId: string, isLinked: boolean, storeId: string,
         joinedSteamGroup: boolean, roles: []
     } | null> {
-        const request: RequestInfo = new Request(config.API_ENDPOINT + CONSTANTS.FETCH_USER + userId, {
+        const tryFetch = async (url: string): Promise<Response> => fetch(new Request(url, {
             method: 'GET',
             headers: new Headers({ 'x-api-key': config.API_KEY }),
-        });
-        const res = await fetch(request);
+        }));
+        const encoded = encodeURIComponent(userId);
+        let res = await tryFetch(config.API_ENDPOINT + CONSTANTS.FETCH_USER + encoded);
+        if (res.status === 501 || res.status === 404) {
+            res = await tryFetch(config.API_ENDPOINT + CONSTANTS.FETCH_USER_BY_DISCORD + encoded);
+        }
         if (!res.ok) {
-            console.error("Error Fetching user: ", userId);
-            console.error("body: ", res.body);
+            console.error("Error Fetching user: ", userId, res.status, res.statusText);
             return null;
         }
         const json = await res.json();
@@ -206,7 +209,7 @@ export class Api {
             }
 
             try {
-                const userRequest = new Request(config.API_ENDPOINT + CONSTANTS.FETCH_USER + userId, {
+                const userRequest = new Request(config.API_ENDPOINT + CONSTANTS.FETCH_USER_BY_DISCORD + encodeURIComponent(userId), {
                     method: 'GET',
                     headers: new Headers({ 'x-api-key': config.API_KEY }),
                 });
@@ -214,7 +217,7 @@ export class Api {
                 const userRes = await fetch(userRequest);
                 if (!userRes.ok) {
                     if (userRes.status !== 500) {
-                        console.error(`[${new Date().toISOString()}] Error fetching user details for ${userId}:`, userRes.status, userRes.statusText);
+                        console.error(`[${new Date().toISOString()}] Error fetching user details for discordId ${userId}:`, userRes.status, userRes.statusText);
                     }
                     return [];
                 }
@@ -452,6 +455,26 @@ export class Api {
     static async fetchMapVoteResults(voteId: string): Promise<{ [mapOptionId: string]: number } | null> {
         try {
             const url = new URL(config.API_ENDPOINT + `/maps/${voteId}/results`);
+            const request: RequestInfo = new Request(url, {
+                method: 'GET',
+                headers: new Headers({ 'x-api-key': config.API_KEY }),
+            });
+            const res = await fetch(request);
+            if (!res.ok) {
+                return null;
+            }
+            return await res.json();
+        } catch (error) {
+            return null;
+        }
+    }
+
+    static async fetchMapVoteGrid(voteId: string, refresh: boolean = false): Promise<{ gridImageUrl?: string; gridImageUrls?: string[] } | null> {
+        try {
+            const url = new URL(config.API_ENDPOINT + `/maps/${voteId}/grid`);
+            if (refresh) {
+                url.searchParams.set('refresh', '1');
+            }
             const request: RequestInfo = new Request(url, {
                 method: 'GET',
                 headers: new Headers({ 'x-api-key': config.API_KEY }),
@@ -729,7 +752,7 @@ export class Api {
         console.log(`[${new Date().toISOString()}] Guild sync disabled - website manages guild settings`);
     }
 
-    static async fetchLinkedUsers(): Promise<string[]> {
+    static async fetchLinkedUsers(): Promise<Array<{ discordId: string; steamId?: string }>> {
         const url = new URL(config.API_ENDPOINT + CONSTANTS.FETCH_LINKED_USERS);
         const request: RequestInfo = new Request(url, {
             method: 'GET',
@@ -756,28 +779,36 @@ export class Api {
                 return [];
             }
 
-            const userIds: string[] = [];
+            const linked: Array<{ discordId: string; steamId?: string }> = [];
+            const seenDiscordIds = new Set<string>();
             for (const user of users) {
                 try {
-                    const userId = typeof user === 'string' ? user : user.id;
+                    const steamId = typeof user === 'object' && user !== null && user.steamId != null ? user.steamId : null;
+                    const discordIdFromList = typeof user === 'object' && user !== null && user.discordId != null ? user.discordId : null;
+                    const userId = typeof user === 'string' ? user : (steamId ?? user.id);
+                    if (discordIdFromList && !seenDiscordIds.has(discordIdFromList)) {
+                        seenDiscordIds.add(discordIdFromList);
+                        linked.push({ discordId: discordIdFromList, steamId: steamId ?? undefined });
+                    }
                     if (!userId) continue;
 
-                    const userRequest = new Request(config.API_ENDPOINT + CONSTANTS.FETCH_USER + userId, {
+                    const userRequest = new Request(config.API_ENDPOINT + CONSTANTS.FETCH_USER + encodeURIComponent(userId), {
                         method: 'GET',
                         headers: new Headers({ 'x-api-key': config.API_KEY }),
                     });
 
                     const userRes = await fetch(userRequest);
                     if (!userRes.ok) {
-                        console.error(`[${new Date().toISOString()}] Error fetching user details for ${userId}:`, userRes.status, userRes.statusText);
+                        console.error(`[${new Date().toISOString()}] Error fetching user details for steamId ${userId}:`, userRes.status, userRes.statusText);
                         continue;
                     }
 
                     const userJson = await userRes.json();
                     if (userJson && userJson.users && userJson.users.length > 0) {
                         const userData = userJson.users[0];
-                        if (userData && userData.discordId) {
-                            userIds.push(userData.discordId);
+                        if (userData && userData.discordId && !seenDiscordIds.has(userData.discordId)) {
+                            seenDiscordIds.add(userData.discordId);
+                            linked.push({ discordId: userData.discordId, steamId: userData.steamId ?? undefined });
                         }
                     }
                 } catch (error) {
@@ -785,7 +816,7 @@ export class Api {
                 }
             }
 
-            return userIds;
+            return linked;
         } catch (error) {
             console.error(`[${new Date().toISOString()}] Error in fetchLinkedUsers:`, error);
             return [];
@@ -1006,14 +1037,17 @@ export class Api {
 
             const usersWithRoles: UserData[] = [];
             
-            for (const discordId of linkedUsers) {
+            for (const entry of linkedUsers) {
                 try {
-                    const userData = await this.fetchUserWithRoles(discordId);
+                    let userData = await this.fetchUserWithRoles(entry.discordId);
+                    if (!userData && entry.steamId) {
+                        userData = await this.fetchUserWithRolesBySteamId(entry.steamId);
+                    }
                     if (userData) {
                         usersWithRoles.push(userData);
                     }
                 } catch (error) {
-                    console.error(`[${new Date().toISOString()}] Error fetching user ${discordId}:`, error);
+                    console.error(`[${new Date().toISOString()}] Error fetching user ${entry.discordId}:`, error);
                 }
             }
 
@@ -1036,7 +1070,7 @@ export class Api {
             }
 
             const trackedRolesMap = await Api.batchFetchRoles(Array.from(allGuildIds));
-            const linkedUserIds = new Set(usersWithRoles.map(user => user.discordId));
+            const linkedUserIds = new Set(linkedUsers.map(u => u.discordId));
 
             for (const guildId of allGuildIds) {
                 try {
@@ -1075,9 +1109,61 @@ export class Api {
         }
     }
 
+    static async fetchUserWithRolesBySteamId(steamId: string): Promise<UserData | null> {
+        try {
+            const request = new Request(config.API_ENDPOINT + CONSTANTS.FETCH_USER + encodeURIComponent(steamId), {
+                method: 'GET',
+                headers: new Headers({ 'x-api-key': config.API_KEY }),
+            });
+
+            const res = await fetch(request);
+            if (!res.ok) {
+                return null;
+            }
+
+            const json = await res.json();
+            let userData: any;
+            if (json.users && Array.isArray(json.users) && json.users.length > 0) {
+                userData = json.users[0];
+            } else if (json && typeof json === 'object') {
+                userData = json;
+            } else {
+                return null;
+            }
+
+            if (!userData.discordId) {
+                return null;
+            }
+
+            const transformedUser: UserData = {
+                id: userData.id,
+                name: userData.name || 'Unknown',
+                email: userData.email || '',
+                emailVerified: userData.emailVerified || null,
+                storeId: userData.storeId || userData.discordId,
+                discordId: userData.discordId,
+                image: userData.image || '',
+                createdAt: userData.createdAt || '',
+                updatedAt: userData.updatedAt || '',
+                joinedSteamGroup: userData.joinedSteamGroup || false,
+                isBanned: userData.isBanned || false,
+                banReason: userData.banReason || null,
+                isBoosting: userData.isBoosting || false,
+                steamId: userData.steamId || '',
+                isLinked: userData.isLinked ?? true,
+                roles: userData.roles || [],
+                accounts: userData.accounts || []
+            };
+
+            return transformedUser;
+        } catch (error) {
+            return null;
+        }
+    }
+
     static async fetchUserWithRoles(discordId: string): Promise<UserData | null> {
         try {
-            const request = new Request(config.API_ENDPOINT + CONSTANTS.FETCH_USER + discordId, {
+            const request = new Request(config.API_ENDPOINT + CONSTANTS.FETCH_USER_BY_DISCORD + encodeURIComponent(discordId), {
                 method: 'GET',
                 headers: new Headers({ 'x-api-key': config.API_KEY }),
             });

@@ -52,7 +52,7 @@ async function start() {
         partials: [Partials.GuildMember]
     });
 
-    client.once("ready", async () => {
+    client.once("clientReady", async () => {
         console.log(">> Bot started");
 
         const lastFetch = storage.get('lastFetch') as string | undefined;
@@ -146,7 +146,7 @@ async function start() {
             partials: [Partials.GuildMember]
         });
 
-        supportClient.once("ready", async () => {
+        supportClient.once("clientReady", async () => {
             console.log(">> Support bot started");
             
             const { TicketRegistry } = await import("./ADDONS/tickets/TicketRegistry.ts");
@@ -190,7 +190,7 @@ async function start() {
             partials: [Partials.GuildMember]
         });
 
-        linkClient.once("ready", async () => {
+        linkClient.once("clientReady", async () => {
             console.log(">> Link bot started");
             
             const linkedCount = await Api.fetchLinkedCount();

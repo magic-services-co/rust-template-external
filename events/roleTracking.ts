@@ -88,7 +88,7 @@ class RoleTracking {
         }
     }
 
-    @On({ event: "ready" })
+    @On({ event: "clientReady" })
     async onReady(client: Client) {
         console.log("Bot is ready");
     }
