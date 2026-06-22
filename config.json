@@ -1,9 +1,9 @@
 {
   "CLIENT_ID": "",
   "BOT_TOKEN": "",
-  "GUILD_IDS": [ "RoleID", "RoleID2"],
-  "VIEW_MEMBERS_ROLES": ["RoleID"],
-  "SYNC_USERS_PERMS": ["-- | Backend Developer |"],
+  "GUILD_IDS": [ ""],
+  "VIEW_MEMBERS_ROLES": [""],
+  "SYNC_USERS_PERMS": ["ManageRoles"],
   "MAP_VOTES_CHANNELS": [
     {
       "guild": "",
@@ -14,15 +14,21 @@
   "API_KEY": "",
   "UPDATE_CHECK_FREQUENCY (MINUTES)": 1,
   "SET_DISCORD_NAME_TO_STEAM_NAME": false,
-  "EMBED_HEX": "0099FF",
+  "EMBED_HEX": "9CFF1E",
   "ACTIVITY_TYPE": "Custom",
   "STATUS_TEXT": "{USERS_AMOUNT} users linked!",
-  "API_ENDPOINT": "http://localhost:3000/api",
-  "TICKET_SUPPORT_ROLE_IDS": ["roleId1", "roleId2"],
+  "API_ENDPOINT": "https://rust.magicthemes.co/api",
+  "TICKET_SUPPORT_ROLE_IDS": ["", ""],
   "TICKET_CATEGORY_ACCESS_ROLES": { 
-    "<categorySlug>": ["roleId1", "roleId2"] 
+    "<categorySlug>": ["", ""] 
   },
   "TICKET_CATEGORY_PING_ROLES": { 
-    "<categorySlug>": ["roleIdA", "roleIdB"] 
-  }
+    "<categorySlug>": ["", ""] 
+  },
+  "TICKET_PANEL_TYPE": "dropdown or buttons",
+  "SUPPORT_BOT_TOKEN": "",
+  "LINK_BOT_TOKEN": "",
+  "TICKET_MODE": "channel or dm",
+  "TICKET_DM_GUILD_ID": "",
+  "TICKET_DM_CHANNEL_CATEGORY_ID": ""
 }
