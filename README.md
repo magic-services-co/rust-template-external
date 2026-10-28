@@ -29,6 +29,7 @@
 
 #### Other Settings
 - `Update Check Frequency` - is how often the bot will ask the website for role changes (like how long it takes for someone to get a role after linking their discord account to the site).
+- `LINKED_MEMBER_CHECK_FREQUENCY (MINUTES)` - how often the bot checks that linked users are still in your Discord server and still authorized the site on Discord. People who left the server, or revoked that Discord access, are unlinked and lose the linked role on the website. Set this to `0` to turn the scheduled check off. Leaving the server still removes the link immediately. If you leave this out, the check runs every 15 minutes. The bot's API key needs `Discord Sync Roles` or `Users` manage, and the website needs `DISCORD_BOT_TOKEN`, `DISCORD_CLIENT_ID`, and `DISCORD_CLIENT_SECRET`. The bot also needs the Server Members intent.
 - `Set Discord name to Steam Name` - will change all linked discord members' usernames on your server to their rust username - to enable this change it to `true`.
 - `EMBED_HEX` - is the Hex Color code of the embeds this bot will make, you can get hex color codes from -> [this website](https://htmlcolorcodes.com/) - don't include the **#**.
 - `ACTIVITY_TYPE` - is for the bot status, you can choose between `PLAYING`, `STREAMING`, `LISTENING`, `WATCHING`, `COMPETING`, and `CUSTOM`.

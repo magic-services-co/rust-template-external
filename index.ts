@@ -3,6 +3,7 @@ import {Client} from "discordx";
 import {ActivityType, IntentsBitField, Partials} from "discord.js";
 import config from './config.json';
 import {Api} from "./tools/Api.ts";
+import {auditLinkedMembers, linkedMemberCheckIntervalMs} from "./tools/linkAudit.ts";
 import Conf from 'conf';
 
 const schema = {
@@ -117,6 +118,21 @@ async function start() {
                 activities: [{type: activityType, name: statusText}]
             });
         }, config["UPDATE_CHECK_FREQUENCY (MINUTES)"] * 60_000);
+
+        const linkedCheckMs = linkedMemberCheckIntervalMs();
+        if (linkedCheckMs) {
+            const runLinkedCheck = () => {
+                auditLinkedMembers(client).catch((error) => {
+                    console.error(`[${new Date().toISOString()}] Linked member check failed:`, error);
+                });
+            };
+            setTimeout(runLinkedCheck, 20_000);
+            setInterval(runLinkedCheck, linkedCheckMs);
+            console.log(`>> Linked member check every ${linkedCheckMs / 60_000} minute(s)`);
+        } else {
+            console.log(">> Linked member check disabled");
+        }
+
         await client.initApplicationCommands();
     });
 

@@ -9,5 +9,6 @@ export const CONSTANTS = {
     FETCH_MAP_VOTES: '/maps/embeds',
     FETCH_LINKED_COUNT: '/admin/user-count',
     FETCH_LINKED_USERS: '/admin/users/linked',
+    AUDIT_LINKS: '/discord/audit-links',
     UPDATE_NITRO_STATUS: '/user/nitro'
 }
